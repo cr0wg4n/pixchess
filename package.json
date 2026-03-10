@@ -1,0 +1,32 @@
+{
+  "name": "pixchess",
+  "version": "0.1.0",
+  "description": "A pixel chess game with cool animations",
+  "author": "Mauricio Matias",
+  "license": "MIT",
+  "homepage": "https://github.com/cr0wg4n/pixchess#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cr0wg4n/pixchess.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cr0wg4n/pixchess/issues"
+  },
+  "scripts": {
+    "dev": "vite --config vite/config.dev.mjs",
+    "build": "vite build --config vite/config.prod.mjs",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0",
+    "terser": "^5.39.0"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^7.7.0",
+    "@types/node": "^25.4.0",
+    "eslint": "^10.0.3",
+    "typescript": "~5.7.2",
+    "vite": "^6.3.1"
+  }
+}
