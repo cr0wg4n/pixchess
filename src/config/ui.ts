@@ -2,6 +2,11 @@ function transformColorHex2Number(hex: string) {
   return Number.parseInt(hex.replace('#', ''), 16)
 }
 
+const UNIFIED_HIGHLIGHT = {
+  stroke: transformColorHex2Number('#dfdfdf'),
+  fill: transformColorHex2Number('#fb6e81'),
+}
+
 const COLORS = {
   primary: {
     text: '#ffffff',
@@ -11,6 +16,61 @@ const COLORS = {
   chessboard: {
     light: transformColorHex2Number('#FFEAE1'),
     dark: transformColorHex2Number('#FFAB98'),
+  },
+  chessEffects: {
+    highlight: {
+      checkedKing: {
+        stroke: transformColorHex2Number('#FF6B6B'),
+        fill: transformColorHex2Number('#FF4D4D'),
+      },
+      hoverMove: {
+        stroke: UNIFIED_HIGHLIGHT.stroke,
+        fill: UNIFIED_HIGHLIGHT.fill,
+      },
+      selectedMove: {
+        stroke: UNIFIED_HIGHLIGHT.stroke,
+        fill: UNIFIED_HIGHLIGHT.fill,
+      },
+      selectedPiece: {
+        stroke: transformColorHex2Number('#FFD166'),
+        fill: transformColorHex2Number('#ffd258'),
+      },
+      validMoveCircle: {
+        fill: transformColorHex2Number('#b37236'),
+      },
+    },
+    particles: {
+      capture: {
+        light: transformColorHex2Number('#FFFFFF'),
+        dark: transformColorHex2Number('#2B2B2B'),
+      },
+      moveTrail: {
+        light: transformColorHex2Number('#FFF8DF'),
+        dark: transformColorHex2Number('#27303A'),
+      },
+    },
+  },
+  promotionPopup: {
+    backdrop: transformColorHex2Number('#000000'),
+    panel: {
+      background: transformColorHex2Number('#FFFFFF'),
+      stroke: transformColorHex2Number('#333333'),
+    },
+    title: {
+      text: '#111111',
+    },
+  },
+  playerProfile: {
+    black: {
+      background: transformColorHex2Number('#1C1C1C'),
+      border: transformColorHex2Number('#474747'),
+      text: '#F4F4F4',
+    },
+    white: {
+      background: transformColorHex2Number('#FFFFFF'),
+      border: transformColorHex2Number('#B9B9B9'),
+      text: '#1B1B1B',
+    },
   },
 }
 

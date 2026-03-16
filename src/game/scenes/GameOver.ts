@@ -1,4 +1,12 @@
 import { Scene } from 'phaser'
+import {
+  COLORS,
+  FONT_SIZES,
+} from '@/config/ui'
+
+interface GameOverData {
+  message?: string
+}
 
 export class GameOver extends Scene {
   camera: Phaser.Cameras.Scene2D.Camera
@@ -9,18 +17,20 @@ export class GameOver extends Scene {
     super('GameOver')
   }
 
-  create() {
+  create(data: GameOverData = {}) {
     this.camera = this.cameras.main
-    this.camera.setBackgroundColor(0xFF0000)
 
-    this.background = this.add.image(512, 384, 'background')
-    this.background.setAlpha(0.5)
+    this.background = this.add.image(384, 384, 'background').setDepth(-1)
 
-    this.gameover_text = this.add.text(512, 384, 'Game Over', {
-      fontFamily: 'Arial Black',
-      fontSize: 64,
-      color: '#ffffff',
-      stroke: '#000000',
+    const message = data.message ?? 'Game Over'
+    const centerX = this.camera.centerX
+    const centerY = this.camera.centerY
+
+    this.gameover_text = this.add.text(centerX, centerY, message, {
+      fontFamily: 'primary',
+      fontSize: FONT_SIZES.lg,
+      color: COLORS.primary.text,
+      stroke: COLORS.primary.textStroke,
       strokeThickness: 8,
       align: 'center',
     })
