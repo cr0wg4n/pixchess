@@ -3,26 +3,21 @@ import type {
   EnPassantState,
   MoveGenerationContext,
 } from '@/game/domain/pieceMoves'
+import type { ChessBoardSceneData } from '@/game/helpers/chessboardSession'
 import type { PieceState } from '@/game/types'
 import {
   Scene,
 } from 'phaser'
 import {
-  CHESS_CAPTURE_EFFECTS,
-  CHESS_HIGHLIGHTS,
-  CHESS_MOVE_EFFECTS,
 } from '@/config/chessEffects'
 import { COLORS } from '@/config/ui'
 import { ChessClock } from '@/game/domain/chessClock'
-import { createInitialPieces } from '@/game/domain/chessSetup'
 import { applyMove } from '@/game/domain/moveEngine'
 import {
   getCheckStatus,
-  getLegalMovesForPiece,
 } from '@/game/domain/pieceMoves'
 import { getPieceValue } from '@/game/domain/pieceValues'
-import { ShadowBehavior } from '@/game/effects/ShadowBehavior'
-import { VisualEffectsManager } from '@/game/effects/VisualEffectsManager'
+import { ChessboardEffectsController } from '@/game/effects/ChessboardEffectsController'
 import { BoardSquare } from '@/game/elements/BoardSquare'
 import { Piece } from '@/game/elements/Piece'
 import { PlayerProfile } from '@/game/elements/PlayerProfile'
@@ -31,9 +26,15 @@ import {
   PromotionPopup,
 } from '@/game/elements/PromotionPopup'
 import {
-  createEmptyPgnHeaders,
+  ChessboardInteractionController,
+} from '@/game/helpers/ChessboardInteractionController'
+import {
+  loadChessBoardGameState,
+  resolveChessBoardSceneData,
+} from '@/game/helpers/chessboardSession'
+import { buildAnnotatedSan, buildSanBase } from '@/game/helpers/chessNotation'
+import {
   exportPgn,
-  importPgn,
 } from '@/game/helpers/pgn'
 import {
   PieceColor,
@@ -43,30 +44,12 @@ import {
 const BOARD_SIZE = 8
 const TILE_SIZE = 60
 const PROFILE_MARGIN = 50
-const WHITE_PLAYER_NAME = 'White Player'
-const BLACK_PLAYER_NAME = 'Black Player'
-const FILES = 'abcdefgh'
-
-interface ChessBoardSceneData {
-  pgn?: string
-  gameMinutes?: number
-  incrementSeconds?: number
-  whitePlayer?: string
-  blackPlayer?: string
-}
 
 export class ChessBoard extends Scene {
   squares: BoardSquare[][] = []
   pieces: Piece[] = []
   pieceStates: PieceState[] = []
   whiteAtBottom = true
-  selectedPieceId: string | null = null
-  legalTargets = new Set<string>()
-  legalCaptureTargets = new Set<string>()
-  hoverTargets = new Set<string>()
-  hoverCaptureTargets = new Set<string>()
-  lastMoveFromKey: string | null = null
-  lastMoveToKey: string | null = null
   movedPieceIds = new Set<string>()
   enPassant: EnPassantState | null = null
   currentTurn: PieceColor = PieceColor.WHITE
@@ -83,42 +66,33 @@ export class ChessBoard extends Scene {
   blackProfile: PlayerProfile | null = null
   whiteCapturedPoints = 0
   blackCapturedPoints = 0
-  validMoveIndicators: Phaser.GameObjects.Arc[] = []
-  cameraRotationDriver = { angle: 0 }
-  cameraRotationTween: Phaser.Tweens.Tween | null = null
   preloadPgn: string | null = null
-  pgnHeaders: Record<string, string> = createEmptyPgnHeaders()
+  pgnHeaders: Record<string, string> = {}
   pgnMoves: string[] = []
   pgnResult = '*'
   pendingPromotionSan: string | null = null
   gameMinutes = 10
   incrementSeconds = 0
-  whitePlayerName = WHITE_PLAYER_NAME
-  blackPlayerName = BLACK_PLAYER_NAME
+  whitePlayerName = 'White Player'
+  blackPlayerName = 'Black Player'
   clock: ChessClock | null = null
   clockTickEvent: Phaser.Time.TimerEvent | null = null
+  boardEffects: ChessboardEffectsController | null = null
+  interactionController: ChessboardInteractionController | null = null
   lastClockTickAt = 0
-
-  effects!: VisualEffectsManager
 
   constructor() {
     super('ChessBoard')
   }
 
   init(data: ChessBoardSceneData = {}) {
-    this.preloadPgn = typeof data.pgn === 'string' ? data.pgn : null
-    this.gameMinutes = Number.isFinite(data.gameMinutes)
-      ? Math.max(1, Math.floor(Number(data.gameMinutes)))
-      : 10
-    this.incrementSeconds = Number.isFinite(data.incrementSeconds)
-      ? Math.max(0, Math.floor(Number(data.incrementSeconds)))
-      : 0
-    this.whitePlayerName = typeof data.whitePlayer === 'string' && data.whitePlayer.trim().length > 0
-      ? data.whitePlayer.trim()
-      : WHITE_PLAYER_NAME
-    this.blackPlayerName = typeof data.blackPlayer === 'string' && data.blackPlayer.trim().length > 0
-      ? data.blackPlayer.trim()
-      : BLACK_PLAYER_NAME
+    const sceneData = resolveChessBoardSceneData(data)
+
+    this.preloadPgn = sceneData.preloadPgn
+    this.gameMinutes = sceneData.gameMinutes
+    this.incrementSeconds = sceneData.incrementSeconds
+    this.whitePlayerName = sceneData.whitePlayerName
+    this.blackPlayerName = sceneData.blackPlayerName
     this.clock = new ChessClock({
       gameMinutes: this.gameMinutes,
       incrementSeconds: this.incrementSeconds,
@@ -128,25 +102,15 @@ export class ChessBoard extends Scene {
   }
 
   create() {
-    this.effects = new VisualEffectsManager(this)
     this.events.once('shutdown', () => {
       this.closePromotionPopup()
-      this.effects.destroy()
+      this.boardEffects?.destroy()
+      this.boardEffects = null
+      this.interactionController?.destroy()
+      this.interactionController = null
       this.clock = null
       this.clockTickEvent?.remove()
       this.clockTickEvent = null
-      this.cameraRotationTween?.stop()
-      this.cameraRotationTween = null
-      const camera = this.cameras?.main
-
-      if (camera) {
-        camera.setAngle(0)
-      }
-
-      for (const indicator of this.validMoveIndicators) {
-        indicator.destroy()
-      }
-      this.validMoveIndicators = []
     })
 
     const boardMetrics = this.getBoardMetrics()
@@ -155,45 +119,27 @@ export class ChessBoard extends Scene {
       boardMetrics.offsetX,
       boardMetrics.offsetY,
     )
+    this.interactionController = new ChessboardInteractionController(this, this.squares, TILE_SIZE)
+    this.boardEffects = new ChessboardEffectsController(this, {
+      getBoardMetrics: () => this.getBoardMetrics(),
+      getViewRow: row => this.getViewRow(row),
+      tileSize: TILE_SIZE,
+    })
 
-    if (this.preloadPgn) {
-      try {
-        const imported = importPgn(this.preloadPgn)
+    const { error, gameState } = loadChessBoardGameState(this.preloadPgn)
 
-        this.pieceStates = imported.state.pieceStates
-        this.movedPieceIds = new Set(imported.state.movedPieceIds)
-        this.enPassant = imported.state.enPassant
-        this.currentTurn = imported.state.currentTurn
-        this.pgnHeaders = {
-          ...createEmptyPgnHeaders(),
-          ...imported.headers,
-        }
-        this.pgnMoves = [...imported.moves]
-        this.pgnResult = imported.result ?? '*'
-        this.clock?.setActiveColor(this.currentTurn)
-      }
-      catch (error) {
-        console.error('Failed to import PGN. Falling back to initial position.', error)
-        this.pieceStates = createInitialPieces()
-        this.movedPieceIds = new Set<string>()
-        this.enPassant = null
-        this.currentTurn = PieceColor.WHITE
-        this.pgnHeaders = createEmptyPgnHeaders()
-        this.pgnMoves = []
-        this.pgnResult = '*'
-        this.clock?.setActiveColor(this.currentTurn)
-      }
+    if (error) {
+      console.error('Failed to import PGN. Falling back to initial position.', error)
     }
-    else {
-      this.pieceStates = createInitialPieces()
-      this.movedPieceIds = new Set<string>()
-      this.enPassant = null
-      this.currentTurn = PieceColor.WHITE
-      this.pgnHeaders = createEmptyPgnHeaders()
-      this.pgnMoves = []
-      this.pgnResult = '*'
-      this.clock?.setActiveColor(this.currentTurn)
-    }
+
+    this.pieceStates = gameState.pieceStates
+    this.movedPieceIds = gameState.movedPieceIds
+    this.enPassant = gameState.enPassant
+    this.currentTurn = gameState.currentTurn
+    this.pgnHeaders = gameState.pgnHeaders
+    this.pgnMoves = gameState.pgnMoves
+    this.pgnResult = gameState.pgnResult
+    this.clock?.setActiveColor(this.currentTurn)
 
     this.pieces = this.createPieceSprites(
       this.pieceStates,
@@ -253,6 +199,18 @@ export class ChessBoard extends Scene {
 
     this.whiteProfile?.setClock(this.clock.getRemaining(PieceColor.WHITE), this.currentTurn === PieceColor.WHITE && !this.isGameFinished)
     this.blackProfile?.setClock(this.clock.getRemaining(PieceColor.BLACK), this.currentTurn === PieceColor.BLACK && !this.isGameFinished)
+  }
+
+  getInteractionState() {
+    return {
+      checkStatus: this.checkStatus,
+      currentTurn: this.currentTurn,
+      enPassant: this.enPassant,
+      isAwaitingPromotion: this.isAwaitingPromotion,
+      isGameFinished: this.isGameFinished,
+      movedPieceIds: this.movedPieceIds,
+      pieceStates: this.pieceStates,
+    }
   }
 
   getViewRow(boardRow: number) {
@@ -332,9 +290,6 @@ export class ChessBoard extends Scene {
       const piece = new Piece(this, x, y, pieceState.textureKey, pieceState.id)
       piece.fitToCell(TILE_SIZE, 10)
       piece.setInteractive({ useHandCursor: true })
-      this.effects.addEffect(piece, new ShadowBehavior(this, {
-        alpha: pieceState.color === PieceColor.WHITE ? 0.20 : 0.15,
-      }))
 
       return piece
     })
@@ -344,13 +299,17 @@ export class ChessBoard extends Scene {
     for (const row of this.squares) {
       for (const square of row) {
         square.on('pointerover', () => {
-          this.handleSquareHover(square.row, square.col)
+          this.interactionController?.handleSquareHover(square.row, square.col, this.getInteractionState())
         })
         square.on('pointerout', () => {
-          this.clearHoverPreview()
+          this.interactionController?.clearHoverPreview(this.getInteractionState())
         })
         square.on('pointerdown', () => {
-          this.handleSquareSelection(square.row, square.col)
+          this.interactionController?.handleSquareSelection(square.row, square.col, this.getInteractionState(), {
+            moveSelectedPieceTo: (row, col) => {
+              this.moveSelectedPieceTo(row, col)
+            },
+          })
         })
       }
     }
@@ -359,147 +318,21 @@ export class ChessBoard extends Scene {
   bindPieceInteractions() {
     for (const piece of this.pieces) {
       piece.on('pointerover', () => {
-        this.setSquareHoverForPiece(piece.identifier, true)
-        this.handlePieceHover(piece.identifier)
+        this.interactionController?.setSquareHoverForPiece(piece.identifier, true, this.getInteractionState())
+        this.interactionController?.handlePieceHover(piece.identifier, this.getInteractionState())
       })
       piece.on('pointerout', () => {
-        this.setSquareHoverForPiece(piece.identifier, false)
-        this.clearHoverPreview()
+        this.interactionController?.setSquareHoverForPiece(piece.identifier, false, this.getInteractionState())
+        this.interactionController?.clearHoverPreview(this.getInteractionState())
       })
       piece.on('pointerdown', () => {
-        this.handlePieceSelection(piece.identifier)
+        this.interactionController?.handlePieceSelection(piece.identifier, this.getInteractionState(), {
+          moveSelectedPieceTo: (row, col) => {
+            this.moveSelectedPieceTo(row, col)
+          },
+        })
       })
     }
-  }
-
-  handleSquareHover(row: number, col: number) {
-    if (this.isGameFinished || this.isAwaitingPromotion) {
-      return
-    }
-
-    const pieceAtSquare = this.pieceStates.find(piece => (
-      piece.position.row === row
-      && piece.position.col === col
-      && piece.color === this.currentTurn
-    ))
-
-    if (!pieceAtSquare) {
-      this.clearHoverPreview()
-      return
-    }
-
-    const legalMoves = getLegalMovesForPiece(pieceAtSquare, this.pieceStates, this.getMoveContext())
-    this.hoverTargets = new Set(legalMoves.map(move => this.toCoordinateKey(move.row, move.col)))
-    this.hoverCaptureTargets = this.getCaptureTargetKeys(pieceAtSquare, legalMoves)
-    this.refreshHighlights()
-  }
-
-  handlePieceHover(pieceId: string) {
-    if (this.isGameFinished || this.isAwaitingPromotion) {
-      return
-    }
-
-    const piece = this.getPieceStateById(pieceId)
-
-    if (!piece || piece.color !== this.currentTurn) {
-      this.clearHoverPreview()
-      return
-    }
-
-    const legalMoves = getLegalMovesForPiece(piece, this.pieceStates, this.getMoveContext())
-    this.hoverTargets = new Set(legalMoves.map(move => this.toCoordinateKey(move.row, move.col)))
-    this.hoverCaptureTargets = this.getCaptureTargetKeys(piece, legalMoves)
-    this.refreshHighlights()
-  }
-
-  clearHoverPreview() {
-    if (this.hoverTargets.size === 0) {
-      return
-    }
-
-    this.hoverTargets.clear()
-    this.hoverCaptureTargets.clear()
-    this.refreshHighlights()
-  }
-
-  handlePieceSelection(pieceId: string) {
-    if (this.isGameFinished || this.isAwaitingPromotion) {
-      return
-    }
-
-    const piece = this.getPieceStateById(pieceId)
-
-    if (!piece) {
-      return
-    }
-
-    if (this.selectedPieceId) {
-      if (this.selectedPieceId === pieceId) {
-        this.clearSelection()
-        return
-      }
-
-      const key = this.toCoordinateKey(piece.position.row, piece.position.col)
-
-      if (this.legalTargets.has(key)) {
-        this.moveSelectedPieceTo(piece.position.row, piece.position.col)
-        return
-      }
-
-      if (piece.color !== this.currentTurn) {
-        this.clearSelection()
-        return
-      }
-    }
-
-    if (piece.color !== this.currentTurn) {
-      return
-    }
-
-    if (this.selectedPieceId === pieceId) {
-      this.clearSelection()
-      return
-    }
-
-    const legalMoves = getLegalMovesForPiece(piece, this.pieceStates, this.getMoveContext())
-
-    this.selectedPieceId = pieceId
-    this.legalTargets = new Set(legalMoves.map(move => this.toCoordinateKey(move.row, move.col)))
-    this.legalCaptureTargets = this.getCaptureTargetKeys(piece, legalMoves)
-    this.refreshHighlights()
-  }
-
-  handleSquareSelection(row: number, col: number) {
-    if (this.isGameFinished || this.isAwaitingPromotion) {
-      return
-    }
-
-    const pieceAtSquare = this.pieceStates.find(piece => (
-      piece.position.row === row
-      && piece.position.col === col
-    ))
-
-    if (!this.selectedPieceId) {
-      if (pieceAtSquare) {
-        this.handlePieceSelection(pieceAtSquare.id)
-      }
-
-      return
-    }
-
-    const key = this.toCoordinateKey(row, col)
-
-    if (!this.legalTargets.has(key)) {
-      if (pieceAtSquare && pieceAtSquare.color === this.currentTurn) {
-        this.handlePieceSelection(pieceAtSquare.id)
-        return
-      }
-
-      this.clearSelection()
-      return
-    }
-
-    this.moveSelectedPieceTo(row, col)
   }
 
   moveSelectedPieceTo(row: number, col: number) {
@@ -507,7 +340,7 @@ export class ChessBoard extends Scene {
       return
     }
 
-    const selectedPieceId = this.selectedPieceId
+    const selectedPieceId = this.interactionController?.getSelectedPieceId() ?? null
 
     if (!selectedPieceId) {
       return
@@ -532,7 +365,7 @@ export class ChessBoard extends Scene {
     })
 
     if (!moveResult) {
-      this.clearSelection()
+      this.interactionController?.clearSelection(this.getInteractionState())
       return
     }
 
@@ -543,18 +376,17 @@ export class ChessBoard extends Scene {
     this.pieceStates = moveResult.pieceStates
     this.movedPieceIds = moveResult.movedPieceIds
     this.enPassant = moveResult.enPassant
-    this.lastMoveFromKey = this.toCoordinateKey(moveResult.movedPiece.from.row, moveResult.movedPiece.from.col)
-    this.lastMoveToKey = this.toCoordinateKey(moveResult.movedPiece.to.row, moveResult.movedPiece.to.col)
+    this.interactionController?.setLastMove(moveResult.movedPiece.from, moveResult.movedPiece.to)
     this.clock?.completeMove(movingColor, moveResult.currentTurn)
     this.currentTurn = moveResult.currentTurn
     this.lastClockTickAt = this.time.now
     this.updateClockDisplays()
     this.refreshCheckStatus()
 
-    const sanBase = this.buildSanBase(stateBeforeMove, moveResult)
+    const sanBase = buildSanBase(stateBeforeMove, moveResult)
 
     if (this.checkStatus.isCheckmate) {
-      this.appendPgnMove(sanBase)
+      this.appendSanMove(sanBase)
       this.endGameByCheckmate()
       return
     }
@@ -571,13 +403,13 @@ export class ChessBoard extends Scene {
       this.isAwaitingPromotion = true
       this.pendingPromotionSan = sanBase
       this.openPromotionPopup(promotionPiece.id, promotionPiece.color)
-      this.clearSelection()
+      this.interactionController?.clearSelection(this.getInteractionState())
       return
     }
 
-    this.appendPgnMove(sanBase)
+    this.appendSanMove(sanBase)
 
-    this.clearSelection()
+    this.interactionController?.clearSelection(this.getInteractionState())
   }
 
   getPromotablePawn(pieceId: string) {
@@ -633,7 +465,7 @@ export class ChessBoard extends Scene {
     this.isAwaitingPromotion = false
     this.closePromotionPopup()
     this.refreshCheckStatus()
-    this.appendPgnMove(this.pendingPromotionSan, newType)
+    this.appendSanMove(this.pendingPromotionSan, newType)
     this.pendingPromotionSan = null
 
     if (this.checkStatus.isCheckmate) {
@@ -689,8 +521,7 @@ export class ChessBoard extends Scene {
         this.registerCapture(capturedPieceState)
       }
 
-      this.shakeBoardOnCapture(capturedPieceState?.type)
-      this.emitCaptureParticles(pieceSprite.x, pieceSprite.y, capturedPieceState?.color)
+      this.boardEffects?.playCaptureEffect(pieceSprite.x, pieceSprite.y, capturedPieceState?.color, capturedPieceState?.type)
       pieceSprite.destroy()
     }
   }
@@ -721,64 +552,6 @@ export class ChessBoard extends Scene {
     this.blackProfile?.setAdvantage(Math.max(blackAdvantage, 0))
   }
 
-  shakeBoardOnCapture(capturedPieceType: PieceType = PieceType.PAWN) {
-    const camera = this.cameras?.main
-
-    if (!camera) {
-      return
-    }
-
-    const pieceValue = getPieceValue(capturedPieceType)
-    const duration = Math.min(
-      CHESS_CAPTURE_EFFECTS.shake.maxDurationMs,
-      CHESS_CAPTURE_EFFECTS.shake.baseDurationMs + pieceValue * CHESS_CAPTURE_EFFECTS.shake.durationPerPointMs,
-    )
-    const intensity = Math.min(
-      CHESS_CAPTURE_EFFECTS.shake.maxIntensity,
-      CHESS_CAPTURE_EFFECTS.shake.baseIntensity + pieceValue * CHESS_CAPTURE_EFFECTS.shake.intensityPerPoint,
-    )
-
-    camera.shake(
-      duration,
-      intensity,
-    )
-
-    const targetRotation = CHESS_CAPTURE_EFFECTS.shake.rotation.baseDegrees
-      + pieceValue * CHESS_CAPTURE_EFFECTS.shake.rotation.degreesPerPoint
-    const rotationAmount = Math.min(
-      CHESS_CAPTURE_EFFECTS.shake.rotation.maxDegrees,
-      targetRotation,
-    ) * (Math.random() < 0.5 ? -1 : 1)
-
-    this.cameraRotationTween?.stop()
-    this.cameraRotationTween = null
-    this.cameraRotationDriver.angle = 0
-    camera.setAngle(0)
-    this.cameraRotationTween = this.tweens.add({
-      targets: this.cameraRotationDriver,
-      angle: rotationAmount,
-      duration: CHESS_CAPTURE_EFFECTS.shake.rotation.tweenDurationMs,
-      ease: 'Sine.easeInOut',
-      yoyo: true,
-      onUpdate: () => {
-        const currentCamera = this.cameras?.main
-
-        if (currentCamera) {
-          currentCamera.setAngle(this.cameraRotationDriver.angle)
-        }
-      },
-      onComplete: () => {
-        const currentCamera = this.cameras?.main
-
-        if (currentCamera) {
-          currentCamera.setAngle(0)
-        }
-        this.cameraRotationDriver.angle = 0
-        this.cameraRotationTween = null
-      },
-    })
-  }
-
   tweenPieceTo(pieceId: string, row: number, col: number) {
     const pieceSprite = this.getPieceSpriteById(pieceId)
     const pieceState = this.getPieceStateById(pieceId)
@@ -786,156 +559,7 @@ export class ChessBoard extends Scene {
     if (!pieceSprite || !pieceState) {
       return
     }
-
-    const startX = pieceSprite.x
-    const startY = pieceSprite.y
-    const boardMetrics = this.getBoardMetrics()
-    const x = boardMetrics.offsetX + col * TILE_SIZE + TILE_SIZE / 2
-    const y = boardMetrics.offsetY + this.getViewRow(row) * TILE_SIZE + TILE_SIZE / 2
-    const distance = Math.hypot(x - startX, y - startY)
-    const movedSquares = Math.max(1, Math.round(distance / TILE_SIZE))
-    const duration = CHESS_MOVE_EFFECTS.tweenDurationMs
-
-    const stopTail = this.emitMoveTrailParticles(pieceSprite, pieceState.color, x, y, duration)
-
-    this.tweens.add({
-      targets: pieceSprite,
-      x,
-      y,
-      duration,
-      onComplete: () => {
-        stopTail()
-
-        if (distance > 2) {
-          this.emitMoveEndBurst(x, y, pieceState.color, movedSquares)
-        }
-      },
-    })
-  }
-
-  clearSelection() {
-    this.selectedPieceId = null
-    this.legalTargets.clear()
-    this.legalCaptureTargets.clear()
-    this.hoverTargets.clear()
-    this.hoverCaptureTargets.clear()
-    this.refreshHighlights()
-  }
-
-  refreshHighlights() {
-    const selectedPiece = this.selectedPieceId
-      ? this.getPieceStateById(this.selectedPieceId)
-      : null
-    const selectedPieceKey = selectedPiece
-      ? this.toCoordinateKey(selectedPiece.position.row, selectedPiece.position.col)
-      : null
-    const checkedKingKey = this.checkStatus.kingPosition && this.checkStatus.inCheck
-      ? this.toCoordinateKey(this.checkStatus.kingPosition.row, this.checkStatus.kingPosition.col)
-      : null
-
-    for (const row of this.squares) {
-      for (const square of row) {
-        const key = this.toCoordinateKey(square.row, square.col)
-
-        if (checkedKingKey && key === checkedKingKey) {
-          square.setHighlight(
-            CHESS_HIGHLIGHTS.checkedKing.strokeColor,
-            CHESS_HIGHLIGHTS.checkedKing.fillColor,
-            CHESS_HIGHLIGHTS.checkedKing.fillAlpha,
-          )
-          continue
-        }
-
-        if (selectedPieceKey && key === selectedPieceKey) {
-          square.setHighlight(
-            CHESS_HIGHLIGHTS.selectedPiece.strokeColor,
-            CHESS_HIGHLIGHTS.selectedPiece.fillColor,
-            CHESS_HIGHLIGHTS.selectedPiece.fillAlpha,
-          )
-          continue
-        }
-
-        if (key === this.lastMoveFromKey || key === this.lastMoveToKey) {
-          square.setHighlight(
-            CHESS_HIGHLIGHTS.selectedPiece.strokeColor,
-            CHESS_HIGHLIGHTS.selectedPiece.fillColor,
-            CHESS_HIGHLIGHTS.selectedPiece.fillAlpha,
-          )
-          continue
-        }
-
-        if (this.legalTargets.has(key)) {
-          square.clearHighlight()
-          continue
-        }
-
-        if (this.hoverTargets.has(key)) {
-          square.clearHighlight()
-          continue
-        }
-
-        square.clearHighlight()
-      }
-    }
-
-    this.refreshValidMoveIndicators()
-  }
-
-  refreshValidMoveIndicators() {
-    for (const indicator of this.validMoveIndicators) {
-      indicator.destroy()
-    }
-    this.validMoveIndicators = []
-
-    const validTargets = new Set<string>([
-      ...this.legalTargets,
-      ...this.hoverTargets,
-    ])
-    const captureTargets = new Set<string>([
-      ...this.legalCaptureTargets,
-      ...this.hoverCaptureTargets,
-    ])
-
-    if (validTargets.size === 0) {
-      return
-    }
-
-    const normalRadius = TILE_SIZE * CHESS_HIGHLIGHTS.validMoveCircle.radiusMultiplier
-    const captureRadius = TILE_SIZE * CHESS_HIGHLIGHTS.validMoveCircle.captureRadiusMultiplier
-
-    for (const key of validTargets) {
-      const [rowRaw, colRaw] = key.split(',')
-      const row = Number(rowRaw)
-      const col = Number(colRaw)
-      const square = this.squares[row]?.[col]
-
-      if (!square) {
-        continue
-      }
-
-      const isCaptureTarget = captureTargets.has(key)
-      const captureStrokeWidth = CHESS_HIGHLIGHTS.validMoveCircle.captureStrokeWidth
-      const indicatorRadius = isCaptureTarget ? captureRadius : normalRadius
-
-      const indicator = this.add.circle(
-        square.x + TILE_SIZE / 2,
-        square.y + TILE_SIZE / 2,
-        indicatorRadius,
-        CHESS_HIGHLIGHTS.validMoveCircle.fillColor,
-        isCaptureTarget ? 0 : CHESS_HIGHLIGHTS.validMoveCircle.fillAlpha,
-      )
-
-      if (isCaptureTarget) {
-        indicator.setStrokeStyle(
-          captureStrokeWidth,
-          CHESS_HIGHLIGHTS.validMoveCircle.captureStrokeColor,
-          CHESS_HIGHLIGHTS.validMoveCircle.captureStrokeAlpha,
-        )
-      }
-
-      indicator.setDepth(7)
-      this.validMoveIndicators.push(indicator)
-    }
+    this.boardEffects?.tweenPieceTo(pieceSprite, pieceState.color, row, col)
   }
 
   getPieceStateById(pieceId: string) {
@@ -944,18 +568,6 @@ export class ChessBoard extends Scene {
 
   getPieceSpriteById(pieceId: string) {
     return this.pieces.find(piece => piece.identifier === pieceId)
-  }
-
-  setSquareHoverForPiece(pieceId: string, isHovering: boolean) {
-    const piece = this.getPieceStateById(pieceId)
-
-    if (!piece) {
-      return
-    }
-
-    const square = this.squares[piece.position.row]?.[piece.position.col]
-
-    square?.setHoverState(isHovering)
   }
 
   getMoveContext(): MoveGenerationContext {
@@ -967,217 +579,21 @@ export class ChessBoard extends Scene {
     }
   }
 
-  getCaptureTargetKeys(piece: PieceState, legalMoves: Array<{ row: number, col: number }>) {
-    const targets = new Set<string>()
-
-    for (const move of legalMoves) {
-      const key = this.toCoordinateKey(move.row, move.col)
-      const occupant = this.pieceStates.find(candidate => (
-        candidate.position.row === move.row
-        && candidate.position.col === move.col
-      ))
-
-      if (occupant && occupant.color !== piece.color) {
-        targets.add(key)
-        continue
-      }
-
-      if (
-        piece.type === PieceType.PAWN
-        && this.enPassant
-        && this.enPassant.captureSquare.row === move.row
-        && this.enPassant.captureSquare.col === move.col
-      ) {
-        targets.add(key)
-      }
-    }
-
-    return targets
-  }
-
   refreshCheckStatus() {
     this.checkStatus = getCheckStatus(this.currentTurn, this.pieceStates, this.getMoveContext())
 
     // Check highlight should update immediately after game state transitions.
-    this.refreshHighlights()
+    this.interactionController?.refreshHighlights(this.getInteractionState())
   }
 
-  toCoordinateKey(row: number, col: number) {
-    return `${row},${col}`
-  }
+  appendSanMove(baseSan: string | null, promotionType?: PieceType) {
+    const annotatedSan = buildAnnotatedSan(baseSan, this.checkStatus, promotionType)
 
-  toAlgebraic(row: number, col: number) {
-    const file = FILES[col] ?? 'a'
-    const rank = 8 - row
-
-    return `${file}${rank}`
-  }
-
-  getPieceLetter(type: PieceType) {
-    if (type === PieceType.KING) {
-      return 'K'
-    }
-
-    if (type === PieceType.QUEEN) {
-      return 'Q'
-    }
-
-    if (type === PieceType.ROOK) {
-      return 'R'
-    }
-
-    if (type === PieceType.BISHOP) {
-      return 'B'
-    }
-
-    if (type === PieceType.KNIGHT) {
-      return 'N'
-    }
-
-    return ''
-  }
-
-  getPromotionCode(type: PieceType | null | undefined) {
-    if (type === PieceType.QUEEN) {
-      return 'Q'
-    }
-
-    if (type === PieceType.ROOK) {
-      return 'R'
-    }
-
-    if (type === PieceType.BISHOP) {
-      return 'B'
-    }
-
-    if (type === PieceType.KNIGHT) {
-      return 'N'
-    }
-
-    return ''
-  }
-
-  getDisambiguation(
-    piece: PieceState,
-    target: { row: number, col: number },
-    stateBeforeMove: {
-      pieceStates: PieceState[]
-      movedPieceIds: ReadonlySet<string>
-      enPassant: EnPassantState | null
-    },
-  ) {
-    const competingPieces = stateBeforeMove.pieceStates
-      .filter(candidate => (
-        candidate.id !== piece.id
-        && candidate.color === piece.color
-        && candidate.type === piece.type
-      ))
-      .filter((candidate) => {
-        const candidateMoves = getLegalMovesForPiece(candidate, stateBeforeMove.pieceStates, {
-          castling: {
-            movedPieceIds: stateBeforeMove.movedPieceIds,
-          },
-          enPassant: stateBeforeMove.enPassant,
-        })
-
-        return candidateMoves.some(move => (
-          move.row === target.row
-          && move.col === target.col
-        ))
-      })
-
-    if (competingPieces.length === 0) {
-      return ''
-    }
-
-    const fromFile = FILES[piece.position.col]
-    const fromRank = String(8 - piece.position.row)
-    const sameFileExists = competingPieces.some(candidate => candidate.position.col === piece.position.col)
-    const sameRankExists = competingPieces.some(candidate => candidate.position.row === piece.position.row)
-
-    if (!sameFileExists) {
-      return fromFile
-    }
-
-    if (!sameRankExists) {
-      return fromRank
-    }
-
-    return `${fromFile}${fromRank}`
-  }
-
-  buildSanBase(
-    stateBeforeMove: {
-      pieceStates: PieceState[]
-      movedPieceIds: ReadonlySet<string>
-      enPassant: EnPassantState | null
-      currentTurn: PieceColor
-    },
-    moveResult: {
-      movedPiece: {
-        pieceId: string
-        from: { row: number, col: number }
-        to: { row: number, col: number }
-      }
-      capturedPieceIds: string[]
-    },
-  ) {
-    const movedPieceBefore = stateBeforeMove.pieceStates.find(piece => piece.id === moveResult.movedPiece.pieceId)
-
-    if (!movedPieceBefore) {
-      return ''
-    }
-
-    const isCastling = (
-      movedPieceBefore.type === PieceType.KING
-      && moveResult.movedPiece.from.row === moveResult.movedPiece.to.row
-      && Math.abs(moveResult.movedPiece.to.col - moveResult.movedPiece.from.col) === 2
-    )
-
-    if (isCastling) {
-      return moveResult.movedPiece.to.col > moveResult.movedPiece.from.col
-        ? 'O-O'
-        : 'O-O-O'
-    }
-
-    const targetSquare = this.toAlgebraic(moveResult.movedPiece.to.row, moveResult.movedPiece.to.col)
-    const isCapture = moveResult.capturedPieceIds.length > 0
-
-    if (movedPieceBefore.type === PieceType.PAWN) {
-      const fromFile = FILES[moveResult.movedPiece.from.col]
-
-      if (isCapture) {
-        return `${fromFile}x${targetSquare}`
-      }
-
-      return targetSquare
-    }
-
-    const pieceLetter = this.getPieceLetter(movedPieceBefore.type)
-    const disambiguation = this.getDisambiguation(movedPieceBefore, moveResult.movedPiece.to, {
-      pieceStates: stateBeforeMove.pieceStates,
-      movedPieceIds: stateBeforeMove.movedPieceIds,
-      enPassant: stateBeforeMove.enPassant,
-    })
-    const captureMarker = isCapture ? 'x' : ''
-
-    return `${pieceLetter}${disambiguation}${captureMarker}${targetSquare}`
-  }
-
-  appendPgnMove(baseSan: string | null, promotionType?: PieceType) {
-    if (!baseSan) {
+    if (!annotatedSan) {
       return
     }
 
-    const promotionCode = this.getPromotionCode(promotionType)
-    const promotionSuffix = promotionCode ? `=${promotionCode}` : ''
-    const checkSuffix = this.checkStatus.isCheckmate
-      ? '#'
-      : this.checkStatus.inCheck
-        ? '+'
-        : ''
-
-    this.pgnMoves.push(`${baseSan}${promotionSuffix}${checkSuffix}`)
+    this.pgnMoves.push(annotatedSan)
     this.pgnResult = '*'
   }
 
@@ -1192,226 +608,5 @@ export class ChessBoard extends Scene {
       moves: this.pgnMoves,
       result: this.pgnResult,
     })
-  }
-
-  emitCaptureParticles(x: number, y: number, capturedColor?: PieceColor) {
-    const particleColor = capturedColor === PieceColor.WHITE
-      ? CHESS_CAPTURE_EFFECTS.particles.color.light
-      : CHESS_CAPTURE_EFFECTS.particles.color.dark
-    const particleCount = CHESS_CAPTURE_EFFECTS.particles.count
-    const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
-
-    for (let index = 0; index < particleCount; index += 1) {
-      const spread = TILE_SIZE * CHESS_CAPTURE_EFFECTS.particles.spawnSpreadMultiplier
-      const spawnX = x + randomBetween(-spread, spread)
-      const spawnY = y + randomBetween(-spread, spread)
-      const particleSize = randomBetween(
-        CHESS_CAPTURE_EFFECTS.particles.radius.min,
-        CHESS_CAPTURE_EFFECTS.particles.radius.max,
-      ) * 2
-      const particle = this.add.rectangle(
-        spawnX,
-        spawnY,
-        particleSize,
-        particleSize,
-        particleColor,
-        CHESS_CAPTURE_EFFECTS.particles.alpha,
-      )
-      particle.setDepth(50)
-
-      const angle = randomBetween(0, Math.PI * 2)
-      const distance = randomBetween(
-        CHESS_CAPTURE_EFFECTS.particles.driftDistance.min,
-        CHESS_CAPTURE_EFFECTS.particles.driftDistance.max,
-      )
-      const targetX = spawnX + Math.cos(angle) * distance
-      const targetY = spawnY + Math.sin(angle) * distance
-
-      this.tweens.add({
-        targets: particle,
-        x: targetX,
-        y: targetY,
-        alpha: 0,
-        scale: 0,
-        duration: randomBetween(
-          CHESS_CAPTURE_EFFECTS.particles.durationMs.min,
-          CHESS_CAPTURE_EFFECTS.particles.durationMs.max,
-        ),
-        ease: 'Cubic.easeOut',
-        onComplete: () => {
-          particle.destroy()
-        },
-      })
-    }
-  }
-
-  emitMoveTrailParticles(
-    pieceSprite: Piece,
-    pieceColor: PieceColor,
-    targetX: number,
-    targetY: number,
-    duration: number,
-  ) {
-    const fromX = pieceSprite.x
-    const fromY = pieceSprite.y
-    const distance = Math.hypot(targetX - fromX, targetY - fromY)
-
-    if (distance < 2) {
-      return () => {}
-    }
-
-    const particleColor = pieceColor === PieceColor.WHITE
-      ? CHESS_MOVE_EFFECTS.trail.color.light
-      : CHESS_MOVE_EFFECTS.trail.color.dark
-    const movedSquares = Math.max(1, Math.round(distance / TILE_SIZE))
-    const intensity = 1 + (movedSquares - 1) * CHESS_MOVE_EFFECTS.trail.intensityPerExtraSquare
-    const targetParticlesPerTick = Math.max(
-      CHESS_MOVE_EFFECTS.trail.particlesPerTick.min,
-      Math.min(
-        CHESS_MOVE_EFFECTS.trail.particlesPerTick.max,
-        Math.round(
-          CHESS_MOVE_EFFECTS.trail.particlesPerTick.min
-          + (movedSquares - 1) * CHESS_MOVE_EFFECTS.trail.particlesPerExtraSquare,
-        ),
-      ),
-    )
-    const sizeMultiplier = 1 + (movedSquares - 1) * CHESS_MOVE_EFFECTS.trail.sizeMultiplierPerExtraSquare
-    const durationMultiplier = 1 + (movedSquares - 1) * CHESS_MOVE_EFFECTS.trail.durationMultiplierPerExtraSquare
-    const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
-    const moveAngle = Math.atan2(targetY - fromY, targetX - fromX)
-    const tickMs = CHESS_MOVE_EFFECTS.trail.tickMs
-    const sparseTargetParticlesPerTick = Math.max(1, Math.round(targetParticlesPerTick * 0.55))
-    let tickIndex = 0
-    const tailEvent = this.time.addEvent({
-      delay: tickMs,
-      loop: true,
-      callback: () => {
-        tickIndex += 1
-
-        const remainingDistance = Math.hypot(targetX - pieceSprite.x, targetY - pieceSprite.y)
-        const moveProgress = Math.min(1, Math.max(0, 1 - remainingDistance / distance))
-        const progressiveRatio = moveProgress * moveProgress
-        const emissionStride = Math.max(2, Math.round(4 - moveProgress * 2))
-
-        if (tickIndex % emissionStride !== 0) {
-          return
-        }
-
-        const particlesPerTick = Math.max(
-          1,
-          Math.round(
-            1
-            + (sparseTargetParticlesPerTick - 1) * progressiveRatio,
-          ),
-        )
-
-        for (let burstIndex = 0; burstIndex < particlesPerTick; burstIndex += 1) {
-          const originX = pieceSprite.x + randomBetween(
-            CHESS_MOVE_EFFECTS.trail.spawnJitter.min,
-            CHESS_MOVE_EFFECTS.trail.spawnJitter.max,
-          )
-          const originY = pieceSprite.y + randomBetween(
-            CHESS_MOVE_EFFECTS.trail.spawnJitter.min,
-            CHESS_MOVE_EFFECTS.trail.spawnJitter.max,
-          )
-          const spreadAngle = moveAngle + Math.PI + randomBetween(
-            CHESS_MOVE_EFFECTS.trail.angleJitter.min,
-            CHESS_MOVE_EFFECTS.trail.angleJitter.max,
-          )
-          const driftDistance = randomBetween(
-            CHESS_MOVE_EFFECTS.trail.driftDistance.min,
-            CHESS_MOVE_EFFECTS.trail.driftDistance.max,
-          ) * intensity
-          const endX = originX + Math.cos(spreadAngle) * driftDistance
-          const endY = originY + Math.sin(spreadAngle) * driftDistance
-          const progressiveSizeMultiplier = 0.4 + progressiveRatio * 1.25
-          const particleSize = randomBetween(
-            CHESS_MOVE_EFFECTS.trail.radius.min,
-            CHESS_MOVE_EFFECTS.trail.radius.max,
-          ) * 2 * sizeMultiplier * progressiveSizeMultiplier
-          const particle = this.add.rectangle(
-            originX,
-            originY,
-            particleSize,
-            particleSize,
-            particleColor,
-            CHESS_MOVE_EFFECTS.trail.alpha,
-          )
-          particle.setDepth(CHESS_MOVE_EFFECTS.trail.depth)
-
-          this.tweens.add({
-            targets: particle,
-            x: endX,
-            y: endY,
-            alpha: 0,
-            scale: 0.25,
-            duration: randomBetween(
-              CHESS_MOVE_EFFECTS.trail.durationMs.min,
-              CHESS_MOVE_EFFECTS.trail.durationMs.max,
-            ) * durationMultiplier,
-            ease: 'Sine.easeOut',
-            onComplete: () => {
-              particle.destroy()
-            },
-          })
-        }
-      },
-    })
-
-    this.time.delayedCall(duration, () => {
-      tailEvent.remove()
-    })
-
-    return () => {
-      tailEvent.remove()
-    }
-  }
-
-  emitMoveEndBurst(x: number, y: number, pieceColor: PieceColor, movedSquares = 1) {
-    const particleColor = pieceColor === PieceColor.WHITE
-      ? CHESS_MOVE_EFFECTS.trail.color.light
-      : CHESS_MOVE_EFFECTS.trail.color.dark
-    const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
-    const burstCount = CHESS_MOVE_EFFECTS.endBurst.count
-      + Math.max(0, movedSquares - 1) * CHESS_MOVE_EFFECTS.endBurst.countPerExtraSquare
-
-    for (let index = 0; index < burstCount; index += 1) {
-      const angle = randomBetween(0, Math.PI * 2)
-      const distance = randomBetween(
-        CHESS_MOVE_EFFECTS.endBurst.driftDistance.min,
-        CHESS_MOVE_EFFECTS.endBurst.driftDistance.max,
-      )
-      const targetX = x + Math.cos(angle) * distance
-      const targetY = y + Math.sin(angle) * distance
-      const particleSize = randomBetween(
-        CHESS_MOVE_EFFECTS.endBurst.radius.min,
-        CHESS_MOVE_EFFECTS.endBurst.radius.max,
-      ) * 2
-      const particle = this.add.rectangle(
-        x,
-        y,
-        particleSize,
-        particleSize,
-        particleColor,
-        CHESS_MOVE_EFFECTS.endBurst.alpha,
-      )
-      particle.setDepth(CHESS_MOVE_EFFECTS.endBurst.depth)
-
-      this.tweens.add({
-        targets: particle,
-        x: targetX,
-        y: targetY,
-        alpha: 0,
-        scale: 0,
-        duration: randomBetween(
-          CHESS_MOVE_EFFECTS.endBurst.durationMs.min,
-          CHESS_MOVE_EFFECTS.endBurst.durationMs.max,
-        ),
-        ease: 'Sine.easeOut',
-        onComplete: () => {
-          particle.destroy()
-        },
-      })
-    }
   }
 }
