@@ -6,16 +6,6 @@ const CHESS_HIGHLIGHTS = {
     fillColor: COLORS.chessEffects.highlight.checkedKing.fill,
     fillAlpha: 0.22,
   },
-  hoverMove: {
-    strokeColor: COLORS.chessEffects.highlight.hoverMove.stroke,
-    fillColor: COLORS.chessEffects.highlight.hoverMove.fill,
-    fillAlpha: 0.25,
-  },
-  selectedMove: {
-    strokeColor: COLORS.chessEffects.highlight.selectedMove.stroke,
-    fillColor: COLORS.chessEffects.highlight.selectedMove.fill,
-    fillAlpha: 0.25,
-  },
   selectedPiece: {
     strokeColor: COLORS.chessEffects.highlight.selectedPiece.stroke,
     fillColor: COLORS.chessEffects.highlight.selectedPiece.fill,
@@ -38,8 +28,8 @@ const CHESS_CAPTURE_EFFECTS = {
       dark: COLORS.chessEffects.particles.capture.dark,
       light: COLORS.chessEffects.particles.capture.light,
     },
-    count: 28,
-    spawnSpreadMultiplier: 0.45,
+    count: 30,
+    spawnSpreadMultiplier: 0.55,
     radius: {
       min: 2.8,
       max: 5.2,
@@ -79,12 +69,13 @@ const CHESS_MOVE_EFFECTS = {
     },
     tickMs: 16,
     particlesPerTick: {
-      min: 2,
-      max: 7,
+      min: 1,
+      max: 6,
     },
+    particlesPerExtraSquare: 1.2,
     intensityPerExtraSquare: 0.45,
-    sizeMultiplierPerExtraSquare: 0.12,
-    durationMultiplierPerExtraSquare: 0.12,
+    sizeMultiplierPerExtraSquare: 0.15,
+    durationMultiplierPerExtraSquare: 0.20,
     spawnJitter: {
       min: -3.4,
       max: 3.4,
@@ -98,8 +89,8 @@ const CHESS_MOVE_EFFECTS = {
       max: 18,
     },
     radius: {
-      min: 1.2,
-      max: 2.8,
+      min: 3,
+      max: 5,
     },
     alpha: 0.65,
     durationMs: {
@@ -110,6 +101,7 @@ const CHESS_MOVE_EFFECTS = {
   },
   endBurst: {
     count: 10,
+    countPerExtraSquare: 4,
     radius: {
       min: 1.4,
       max: 2.8,

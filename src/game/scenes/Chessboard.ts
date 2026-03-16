@@ -13,6 +13,7 @@ import {
   CHESS_MOVE_EFFECTS,
 } from '@/config/chessEffects'
 import { COLORS } from '@/config/ui'
+import { ChessClock } from '@/game/domain/chessClock'
 import { createInitialPieces } from '@/game/domain/chessSetup'
 import { applyMove } from '@/game/domain/moveEngine'
 import {
@@ -48,6 +49,10 @@ const FILES = 'abcdefgh'
 
 interface ChessBoardSceneData {
   pgn?: string
+  gameMinutes?: number
+  incrementSeconds?: number
+  whitePlayer?: string
+  blackPlayer?: string
 }
 
 export class ChessBoard extends Scene {
@@ -60,6 +65,8 @@ export class ChessBoard extends Scene {
   legalCaptureTargets = new Set<string>()
   hoverTargets = new Set<string>()
   hoverCaptureTargets = new Set<string>()
+  lastMoveFromKey: string | null = null
+  lastMoveToKey: string | null = null
   movedPieceIds = new Set<string>()
   enPassant: EnPassantState | null = null
   currentTurn: PieceColor = PieceColor.WHITE
@@ -84,6 +91,13 @@ export class ChessBoard extends Scene {
   pgnMoves: string[] = []
   pgnResult = '*'
   pendingPromotionSan: string | null = null
+  gameMinutes = 10
+  incrementSeconds = 0
+  whitePlayerName = WHITE_PLAYER_NAME
+  blackPlayerName = BLACK_PLAYER_NAME
+  clock: ChessClock | null = null
+  clockTickEvent: Phaser.Time.TimerEvent | null = null
+  lastClockTickAt = 0
 
   effects!: VisualEffectsManager
 
@@ -93,6 +107,24 @@ export class ChessBoard extends Scene {
 
   init(data: ChessBoardSceneData = {}) {
     this.preloadPgn = typeof data.pgn === 'string' ? data.pgn : null
+    this.gameMinutes = Number.isFinite(data.gameMinutes)
+      ? Math.max(1, Math.floor(Number(data.gameMinutes)))
+      : 10
+    this.incrementSeconds = Number.isFinite(data.incrementSeconds)
+      ? Math.max(0, Math.floor(Number(data.incrementSeconds)))
+      : 0
+    this.whitePlayerName = typeof data.whitePlayer === 'string' && data.whitePlayer.trim().length > 0
+      ? data.whitePlayer.trim()
+      : WHITE_PLAYER_NAME
+    this.blackPlayerName = typeof data.blackPlayer === 'string' && data.blackPlayer.trim().length > 0
+      ? data.blackPlayer.trim()
+      : BLACK_PLAYER_NAME
+    this.clock = new ChessClock({
+      gameMinutes: this.gameMinutes,
+      incrementSeconds: this.incrementSeconds,
+      activeColor: this.currentTurn,
+    })
+    this.lastClockTickAt = 0
   }
 
   create() {
@@ -100,6 +132,9 @@ export class ChessBoard extends Scene {
     this.events.once('shutdown', () => {
       this.closePromotionPopup()
       this.effects.destroy()
+      this.clock = null
+      this.clockTickEvent?.remove()
+      this.clockTickEvent = null
       this.cameraRotationTween?.stop()
       this.cameraRotationTween = null
       const camera = this.cameras?.main
@@ -135,6 +170,7 @@ export class ChessBoard extends Scene {
         }
         this.pgnMoves = [...imported.moves]
         this.pgnResult = imported.result ?? '*'
+        this.clock?.setActiveColor(this.currentTurn)
       }
       catch (error) {
         console.error('Failed to import PGN. Falling back to initial position.', error)
@@ -145,6 +181,7 @@ export class ChessBoard extends Scene {
         this.pgnHeaders = createEmptyPgnHeaders()
         this.pgnMoves = []
         this.pgnResult = '*'
+        this.clock?.setActiveColor(this.currentTurn)
       }
     }
     else {
@@ -155,6 +192,7 @@ export class ChessBoard extends Scene {
       this.pgnHeaders = createEmptyPgnHeaders()
       this.pgnMoves = []
       this.pgnResult = '*'
+      this.clock?.setActiveColor(this.currentTurn)
     }
 
     this.pieces = this.createPieceSprites(
@@ -163,10 +201,58 @@ export class ChessBoard extends Scene {
       boardMetrics.offsetY,
     )
     this.createPlayerProfiles(boardMetrics.offsetX, boardMetrics.offsetY)
+    this.startChessClock()
 
     this.bindBoardInteractions()
     this.bindPieceInteractions()
     this.refreshCheckStatus()
+  }
+
+  startChessClock() {
+    this.updateClockDisplays()
+    this.lastClockTickAt = this.time.now
+    this.clockTickEvent?.remove()
+    this.clockTickEvent = this.time.addEvent({
+      delay: 100,
+      loop: true,
+      callback: () => {
+        this.tickChessClock()
+      },
+    })
+  }
+
+  tickChessClock() {
+    if (!this.clock) {
+      return
+    }
+
+    if (this.isGameFinished || this.isAwaitingPromotion) {
+      this.lastClockTickAt = this.time.now
+      return
+    }
+
+    const now = this.time.now
+    const deltaMs = Math.max(0, now - this.lastClockTickAt)
+
+    this.lastClockTickAt = now
+    const loser = this.clock.tick(deltaMs)
+
+    if (loser) {
+      this.updateClockDisplays()
+      this.endGameByTimeout(loser)
+      return
+    }
+
+    this.updateClockDisplays()
+  }
+
+  updateClockDisplays() {
+    if (!this.clock) {
+      return
+    }
+
+    this.whiteProfile?.setClock(this.clock.getRemaining(PieceColor.WHITE), this.currentTurn === PieceColor.WHITE && !this.isGameFinished)
+    this.blackProfile?.setClock(this.clock.getRemaining(PieceColor.BLACK), this.currentTurn === PieceColor.BLACK && !this.isGameFinished)
   }
 
   getViewRow(boardRow: number) {
@@ -196,15 +282,19 @@ export class ChessBoard extends Scene {
     const bottomY = offsetY + boardSize + PROFILE_MARGIN
     const whiteY = this.whiteAtBottom ? bottomY : topY
     const blackY = this.whiteAtBottom ? topY : bottomY
+    const whiteAvatarSide = this.whiteAtBottom ? 'left' : 'right'
+    const blackAvatarSide = this.whiteAtBottom ? 'right' : 'left'
 
     this.whiteProfile = new PlayerProfile(this, centerX, whiteY, {
+      avatarSide: whiteAvatarSide,
       color: PieceColor.WHITE,
-      name: WHITE_PLAYER_NAME,
+      name: this.whitePlayerName,
     })
 
     this.blackProfile = new PlayerProfile(this, centerX, blackY, {
+      avatarSide: blackAvatarSide,
       color: PieceColor.BLACK,
-      name: BLACK_PLAYER_NAME,
+      name: this.blackPlayerName,
     })
   }
 
@@ -429,6 +519,7 @@ export class ChessBoard extends Scene {
       enPassant: this.enPassant,
       currentTurn: this.currentTurn,
     }
+    const movingColor = this.currentTurn
 
     const moveResult = applyMove({
       pieceStates: this.pieceStates,
@@ -452,7 +543,12 @@ export class ChessBoard extends Scene {
     this.pieceStates = moveResult.pieceStates
     this.movedPieceIds = moveResult.movedPieceIds
     this.enPassant = moveResult.enPassant
+    this.lastMoveFromKey = this.toCoordinateKey(moveResult.movedPiece.from.row, moveResult.movedPiece.from.col)
+    this.lastMoveToKey = this.toCoordinateKey(moveResult.movedPiece.to.row, moveResult.movedPiece.to.col)
+    this.clock?.completeMove(movingColor, moveResult.currentTurn)
     this.currentTurn = moveResult.currentTurn
+    this.lastClockTickAt = this.time.now
+    this.updateClockDisplays()
     this.refreshCheckStatus()
 
     const sanBase = this.buildSanBase(stateBeforeMove, moveResult)
@@ -547,11 +643,34 @@ export class ChessBoard extends Scene {
 
   endGameByCheckmate() {
     this.isGameFinished = true
+    this.clockTickEvent?.remove()
+    this.clockTickEvent = null
     this.pgnResult = this.currentTurn === PieceColor.WHITE ? '0-1' : '1-0'
+    this.updateClockDisplays()
 
     const winnerMessage = this.currentTurn === PieceColor.WHITE
       ? 'Black Wins!'
       : 'White Wins!'
+
+    this.scene.start('GameOver', {
+      message: winnerMessage,
+    })
+  }
+
+  endGameByTimeout(loser: PieceColor) {
+    if (this.isGameFinished) {
+      return
+    }
+
+    this.isGameFinished = true
+    this.clockTickEvent?.remove()
+    this.clockTickEvent = null
+    this.pgnResult = loser === PieceColor.WHITE ? '0-1' : '1-0'
+    this.updateClockDisplays()
+
+    const winnerMessage = loser === PieceColor.WHITE
+      ? 'Black Wins on Time!'
+      : 'White Wins on Time!'
 
     this.scene.start('GameOver', {
       message: winnerMessage,
@@ -674,6 +793,7 @@ export class ChessBoard extends Scene {
     const x = boardMetrics.offsetX + col * TILE_SIZE + TILE_SIZE / 2
     const y = boardMetrics.offsetY + this.getViewRow(row) * TILE_SIZE + TILE_SIZE / 2
     const distance = Math.hypot(x - startX, y - startY)
+    const movedSquares = Math.max(1, Math.round(distance / TILE_SIZE))
     const duration = CHESS_MOVE_EFFECTS.tweenDurationMs
 
     const stopTail = this.emitMoveTrailParticles(pieceSprite, pieceState.color, x, y, duration)
@@ -687,7 +807,7 @@ export class ChessBoard extends Scene {
         stopTail()
 
         if (distance > 2) {
-          this.emitMoveEndBurst(x, y, pieceState.color)
+          this.emitMoveEndBurst(x, y, pieceState.color, movedSquares)
         }
       },
     })
@@ -727,6 +847,15 @@ export class ChessBoard extends Scene {
         }
 
         if (selectedPieceKey && key === selectedPieceKey) {
+          square.setHighlight(
+            CHESS_HIGHLIGHTS.selectedPiece.strokeColor,
+            CHESS_HIGHLIGHTS.selectedPiece.fillColor,
+            CHESS_HIGHLIGHTS.selectedPiece.fillAlpha,
+          )
+          continue
+        }
+
+        if (key === this.lastMoveFromKey || key === this.lastMoveToKey) {
           square.setHighlight(
             CHESS_HIGHLIGHTS.selectedPiece.strokeColor,
             CHESS_HIGHLIGHTS.selectedPiece.fillColor,
@@ -1076,13 +1205,15 @@ export class ChessBoard extends Scene {
       const spread = TILE_SIZE * CHESS_CAPTURE_EFFECTS.particles.spawnSpreadMultiplier
       const spawnX = x + randomBetween(-spread, spread)
       const spawnY = y + randomBetween(-spread, spread)
-      const particle = this.add.circle(
+      const particleSize = randomBetween(
+        CHESS_CAPTURE_EFFECTS.particles.radius.min,
+        CHESS_CAPTURE_EFFECTS.particles.radius.max,
+      ) * 2
+      const particle = this.add.rectangle(
         spawnX,
         spawnY,
-        randomBetween(
-          CHESS_CAPTURE_EFFECTS.particles.radius.min,
-          CHESS_CAPTURE_EFFECTS.particles.radius.max,
-        ),
+        particleSize,
+        particleSize,
         particleColor,
         CHESS_CAPTURE_EFFECTS.particles.alpha,
       )
@@ -1134,11 +1265,14 @@ export class ChessBoard extends Scene {
       : CHESS_MOVE_EFFECTS.trail.color.dark
     const movedSquares = Math.max(1, Math.round(distance / TILE_SIZE))
     const intensity = 1 + (movedSquares - 1) * CHESS_MOVE_EFFECTS.trail.intensityPerExtraSquare
-    const particlesPerTick = Math.max(
+    const targetParticlesPerTick = Math.max(
       CHESS_MOVE_EFFECTS.trail.particlesPerTick.min,
       Math.min(
         CHESS_MOVE_EFFECTS.trail.particlesPerTick.max,
-        1 + Math.round(intensity * 1.3),
+        Math.round(
+          CHESS_MOVE_EFFECTS.trail.particlesPerTick.min
+          + (movedSquares - 1) * CHESS_MOVE_EFFECTS.trail.particlesPerExtraSquare,
+        ),
       ),
     )
     const sizeMultiplier = 1 + (movedSquares - 1) * CHESS_MOVE_EFFECTS.trail.sizeMultiplierPerExtraSquare
@@ -1146,10 +1280,31 @@ export class ChessBoard extends Scene {
     const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
     const moveAngle = Math.atan2(targetY - fromY, targetX - fromX)
     const tickMs = CHESS_MOVE_EFFECTS.trail.tickMs
+    const sparseTargetParticlesPerTick = Math.max(1, Math.round(targetParticlesPerTick * 0.55))
+    let tickIndex = 0
     const tailEvent = this.time.addEvent({
       delay: tickMs,
       loop: true,
       callback: () => {
+        tickIndex += 1
+
+        const remainingDistance = Math.hypot(targetX - pieceSprite.x, targetY - pieceSprite.y)
+        const moveProgress = Math.min(1, Math.max(0, 1 - remainingDistance / distance))
+        const progressiveRatio = moveProgress * moveProgress
+        const emissionStride = Math.max(2, Math.round(4 - moveProgress * 2))
+
+        if (tickIndex % emissionStride !== 0) {
+          return
+        }
+
+        const particlesPerTick = Math.max(
+          1,
+          Math.round(
+            1
+            + (sparseTargetParticlesPerTick - 1) * progressiveRatio,
+          ),
+        )
+
         for (let burstIndex = 0; burstIndex < particlesPerTick; burstIndex += 1) {
           const originX = pieceSprite.x + randomBetween(
             CHESS_MOVE_EFFECTS.trail.spawnJitter.min,
@@ -1169,13 +1324,16 @@ export class ChessBoard extends Scene {
           ) * intensity
           const endX = originX + Math.cos(spreadAngle) * driftDistance
           const endY = originY + Math.sin(spreadAngle) * driftDistance
-          const particle = this.add.circle(
+          const progressiveSizeMultiplier = 0.4 + progressiveRatio * 1.25
+          const particleSize = randomBetween(
+            CHESS_MOVE_EFFECTS.trail.radius.min,
+            CHESS_MOVE_EFFECTS.trail.radius.max,
+          ) * 2 * sizeMultiplier * progressiveSizeMultiplier
+          const particle = this.add.rectangle(
             originX,
             originY,
-            randomBetween(
-              CHESS_MOVE_EFFECTS.trail.radius.min,
-              CHESS_MOVE_EFFECTS.trail.radius.max,
-            ) * sizeMultiplier,
+            particleSize,
+            particleSize,
             particleColor,
             CHESS_MOVE_EFFECTS.trail.alpha,
           )
@@ -1186,7 +1344,7 @@ export class ChessBoard extends Scene {
             x: endX,
             y: endY,
             alpha: 0,
-            scale: 0,
+            scale: 0.25,
             duration: randomBetween(
               CHESS_MOVE_EFFECTS.trail.durationMs.min,
               CHESS_MOVE_EFFECTS.trail.durationMs.max,
@@ -1209,13 +1367,15 @@ export class ChessBoard extends Scene {
     }
   }
 
-  emitMoveEndBurst(x: number, y: number, pieceColor: PieceColor) {
+  emitMoveEndBurst(x: number, y: number, pieceColor: PieceColor, movedSquares = 1) {
     const particleColor = pieceColor === PieceColor.WHITE
       ? CHESS_MOVE_EFFECTS.trail.color.light
       : CHESS_MOVE_EFFECTS.trail.color.dark
     const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
+    const burstCount = CHESS_MOVE_EFFECTS.endBurst.count
+      + Math.max(0, movedSquares - 1) * CHESS_MOVE_EFFECTS.endBurst.countPerExtraSquare
 
-    for (let index = 0; index < CHESS_MOVE_EFFECTS.endBurst.count; index += 1) {
+    for (let index = 0; index < burstCount; index += 1) {
       const angle = randomBetween(0, Math.PI * 2)
       const distance = randomBetween(
         CHESS_MOVE_EFFECTS.endBurst.driftDistance.min,
@@ -1223,13 +1383,15 @@ export class ChessBoard extends Scene {
       )
       const targetX = x + Math.cos(angle) * distance
       const targetY = y + Math.sin(angle) * distance
-      const particle = this.add.circle(
+      const particleSize = randomBetween(
+        CHESS_MOVE_EFFECTS.endBurst.radius.min,
+        CHESS_MOVE_EFFECTS.endBurst.radius.max,
+      ) * 2
+      const particle = this.add.rectangle(
         x,
         y,
-        randomBetween(
-          CHESS_MOVE_EFFECTS.endBurst.radius.min,
-          CHESS_MOVE_EFFECTS.endBurst.radius.max,
-        ),
+        particleSize,
+        particleSize,
         particleColor,
         CHESS_MOVE_EFFECTS.endBurst.alpha,
       )

@@ -24,7 +24,10 @@ export class MainMenu extends Scene {
     }).setOrigin(0.5)
 
     this.input.once('pointerdown', () => {
-      this.scene.start('ChessBoard')
+      this.scene.start('ChessBoard', {
+        gameMinutes: 10,
+        incrementSeconds: 0,
+      })
     })
 
     this.mainBackground = this.add.image(384, 384, 'background').setDepth(-1)

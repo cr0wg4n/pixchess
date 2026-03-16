@@ -2,11 +2,6 @@ function transformColorHex2Number(hex: string) {
   return Number.parseInt(hex.replace('#', ''), 16)
 }
 
-const UNIFIED_HIGHLIGHT = {
-  stroke: transformColorHex2Number('#dfdfdf'),
-  fill: transformColorHex2Number('#fb6e81'),
-}
-
 const COLORS = {
   primary: {
     text: '#ffffff',
@@ -22,14 +17,6 @@ const COLORS = {
       checkedKing: {
         stroke: transformColorHex2Number('#FF6B6B'),
         fill: transformColorHex2Number('#FF4D4D'),
-      },
-      hoverMove: {
-        stroke: UNIFIED_HIGHLIGHT.stroke,
-        fill: UNIFIED_HIGHLIGHT.fill,
-      },
-      selectedMove: {
-        stroke: UNIFIED_HIGHLIGHT.stroke,
-        fill: UNIFIED_HIGHLIGHT.fill,
       },
       selectedPiece: {
         stroke: transformColorHex2Number('#FFD166'),
