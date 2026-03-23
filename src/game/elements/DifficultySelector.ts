@@ -9,10 +9,10 @@ interface DifficultySelectorOptions {
 }
 
 export const LEVELS = [
-  { level: 1, label: 'Easygoing' },
-  { level: 2, label: 'Steady' },
-  { level: 3, label: 'Fierce' },
-  { level: 4, label: 'Brutal' },
+  { level: 1, label: 'Easy' },
+  { level: 2, label: 'Friendly' },
+  { level: 3, label: 'Medium' },
+  { level: 4, label: 'Hard' },
   { level: 5, label: 'Insane' },
 ]
 
@@ -51,8 +51,15 @@ export class DifficultySelector extends GameObjects.Container {
       const bx = -TOTAL_W / 2 + i * (BTN_W + BTN_GAP) + BTN_W / 2
       const by = BTNS_OFFSET_Y
 
-      const bg = scene.add.rectangle(bx, by, BTN_W, BTN_H, 0xFFFFFF, 0.25)
-      bg.setStrokeStyle(2, 0xFFFFFF, 0.7)
+      const bg = scene.add.rectangle(
+        bx,
+        by,
+        BTN_W,
+        BTN_H,
+        COLORS.difficultySelector.button.fill,
+        COLORS.difficultySelector.button.state.defaultAlpha,
+      )
+      bg.setStrokeStyle(2, COLORS.difficultySelector.button.stroke, 0.7)
       bg.setInteractive({ useHandCursor: true })
 
       const lbl = scene.add.text(bx, by, label, {
@@ -71,8 +78,12 @@ export class DifficultySelector extends GameObjects.Container {
       bg.setData('label', label)
 
       bg.on('pointerover', () => {
-        if (this.selectedLevel !== level)
-          bg.setFillStyle(0xFFFFFF, 0.4)
+        if (this.selectedLevel !== level) {
+          bg.setFillStyle(
+            COLORS.difficultySelector.button.fill,
+            COLORS.difficultySelector.button.state.hoverAlpha,
+          )
+        }
       })
       bg.on('pointerout', () => {
         this.refreshButton(i)
@@ -109,12 +120,18 @@ export class DifficultySelector extends GameObjects.Container {
     const { bg } = this.buttons[i]
     const level = LEVELS[i].level
     if (this.selectedLevel === level) {
-      bg.setFillStyle(0xFFFFFF, 0.82)
-      this.buttons[i].label.setColor('#1a1a1a')
-      this.buttons[i].label.setStroke('#1a1a1a', 0)
+      bg.setFillStyle(
+        COLORS.difficultySelector.button.fill,
+        COLORS.difficultySelector.button.state.activeAlpha,
+      )
+      this.buttons[i].label.setColor(COLORS.difficultySelector.label.selectedText)
+      this.buttons[i].label.setStroke(COLORS.difficultySelector.label.selectedStroke, 0)
     }
     else {
-      bg.setFillStyle(0xFFFFFF, 0.2)
+      bg.setFillStyle(
+        COLORS.difficultySelector.button.fill,
+        COLORS.difficultySelector.button.state.defaultAlpha,
+      )
       this.buttons[i].label.setColor(COLORS.primary.text)
       this.buttons[i].label.setStroke(COLORS.primary.textStroke, 3)
     }

@@ -66,6 +66,21 @@ const COLORS = {
       text: '#1B1B1B',
     },
   },
+  difficultySelector: {
+    button: {
+      fill: transformColorHex2Number('#FFFFFF'),
+      stroke: transformColorHex2Number('#FFFFFF'),
+      state: {
+        defaultAlpha: 0.2,
+        hoverAlpha: 0.4,
+        activeAlpha: 0.82,
+      },
+    },
+    label: {
+      selectedText: '#1a1a1a',
+      selectedStroke: '#1a1a1a',
+    },
+  },
 }
 
 const FONT_SIZES = {
