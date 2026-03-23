@@ -15,6 +15,9 @@ import {
 import {
   CHESS_MOVE_EFFECTS,
 } from '@/config/chessEffects'
+import {
+  computeChessboardResponsiveMetrics,
+} from '@/config/responsive'
 import { COLORS } from '@/config/ui'
 import { createChessAiAdapter } from '@/game/ai/chessAIEngine'
 import { ChessClock } from '@/game/domain/chessClock'
@@ -50,8 +53,18 @@ import {
 } from '@/game/types'
 
 const BOARD_SIZE = 8
-const TILE_SIZE = 60
-const PROFILE_MARGIN = 50
+const BASE_TILE_SIZE = 60
+const MIN_TILE_SIZE = 44
+const MAX_TILE_SIZE = 92
+const PROFILE_HEIGHT = 60
+const CONTENT_PADDING_DESKTOP = 16
+const CONTENT_PADDING_MOBILE = 10
+const PROFILE_MARGIN_DESKTOP = 50
+const PROFILE_MARGIN_MOBILE = 42
+const MENU_BUTTON_SPACE_DESKTOP = 72
+const MENU_BUTTON_SPACE_MOBILE = 56
+const MOBILE_BREAKPOINT = 600
+const MOBILE_TILE_UPSCALE = 1.5
 const GAME_OVER_DELAY_MS = 5000
 
 export class ChessBoard extends Scene {
@@ -190,12 +203,13 @@ export class ChessBoard extends Scene {
     this.squares = this.createBoardRectangles(
       boardMetrics.offsetX,
       boardMetrics.offsetY,
+      boardMetrics.tileSize,
     )
-    this.interactionController = new ChessboardInteractionController(this, this.squares, TILE_SIZE)
+    this.interactionController = new ChessboardInteractionController(this, this.squares, boardMetrics.tileSize)
     this.boardEffects = new ChessboardEffectsController(this, {
       getBoardMetrics: () => this.getBoardMetrics(),
       getViewRow: row => this.getViewRow(row),
-      tileSize: TILE_SIZE,
+      tileSize: boardMetrics.tileSize,
     })
 
     const { error, gameState } = loadChessBoardGameState(this.preloadPgn)
@@ -217,9 +231,15 @@ export class ChessBoard extends Scene {
       this.pieceStates,
       boardMetrics.offsetX,
       boardMetrics.offsetY,
+      boardMetrics.tileSize,
     )
-    this.createPlayerProfiles(boardMetrics.offsetX, boardMetrics.offsetY)
-    this.createBackMenuButton(boardMetrics.offsetX, boardMetrics.offsetY)
+    this.createPlayerProfiles(
+      boardMetrics.offsetX,
+      boardMetrics.offsetY,
+      boardMetrics.size,
+      boardMetrics.profileMargin,
+    )
+    this.createBackMenuButton(boardMetrics)
     this.startChessClock()
 
     this.bindBoardInteractions()
@@ -231,12 +251,15 @@ export class ChessBoard extends Scene {
     }
   }
 
-  createBackMenuButton(offsetX: number, offsetY: number) {
+  createBackMenuButton(boardMetrics: ReturnType<ChessBoard['getBoardMetrics']>) {
     this.backMenuButton?.destroy()
 
+    const targetX = Math.min(this.scale.width - 12, boardMetrics.offsetX + boardMetrics.size + 28)
+    const targetY = Math.min(this.scale.height - 40, boardMetrics.offsetY + boardMetrics.size + boardMetrics.profileMargin)
+
     this.backMenuButton = new Button(this, {
-      x: offsetX + BOARD_SIZE * TILE_SIZE + 28,
-      y: offsetY + BOARD_SIZE * TILE_SIZE + 50,
+      x: targetX,
+      y: targetY,
       label: '< Menu',
       fontSize: 20,
       strokeThickness: 4,
@@ -319,20 +342,38 @@ export class ChessBoard extends Scene {
   }
 
   getBoardMetrics() {
-    const size = BOARD_SIZE * TILE_SIZE
+    const viewportWidth = this.game.canvas?.clientWidth
+      || this.scale.parentSize.width
+      || this.scale.width
+    const viewportHeight = this.game.canvas?.clientHeight
+      || this.scale.parentSize.height
+      || this.scale.height
 
-    return {
-      size,
-      offsetX: (this.scale.width - size) / 2,
-      offsetY: (this.scale.height - size) / 2,
-    }
+    return computeChessboardResponsiveMetrics({
+      baseTileSize: BASE_TILE_SIZE,
+      boardSize: BOARD_SIZE,
+      contentPaddingDesktop: CONTENT_PADDING_DESKTOP,
+      contentPaddingMobile: CONTENT_PADDING_MOBILE,
+      maxTileSize: MAX_TILE_SIZE,
+      menuButtonSpaceDesktop: MENU_BUTTON_SPACE_DESKTOP,
+      menuButtonSpaceMobile: MENU_BUTTON_SPACE_MOBILE,
+      minTileSize: MIN_TILE_SIZE,
+      mobileBreakpoint: MOBILE_BREAKPOINT,
+      mobileTileUpscale: MOBILE_TILE_UPSCALE,
+      profileHeight: PROFILE_HEIGHT,
+      profileMarginDesktop: PROFILE_MARGIN_DESKTOP,
+      profileMarginMobile: PROFILE_MARGIN_MOBILE,
+      sceneHeight: this.scale.height,
+      sceneWidth: this.scale.width,
+      viewportHeight,
+      viewportWidth,
+    })
   }
 
-  createPlayerProfiles(offsetX: number, offsetY: number) {
-    const boardSize = BOARD_SIZE * TILE_SIZE
+  createPlayerProfiles(offsetX: number, offsetY: number, boardSize: number, profileMargin: number) {
     const centerX = offsetX + boardSize / 2
-    const topY = offsetY - PROFILE_MARGIN
-    const bottomY = offsetY + boardSize + PROFILE_MARGIN
+    const topY = offsetY - profileMargin
+    const bottomY = offsetY + boardSize + profileMargin
     const whiteY = this.whiteAtBottom ? bottomY : topY
     const blackY = this.whiteAtBottom ? topY : bottomY
     const whiteAvatarSide = this.whiteAtBottom ? 'left' : 'right'
@@ -351,7 +392,7 @@ export class ChessBoard extends Scene {
     })
   }
 
-  createBoardRectangles(offsetX: number, offsetY: number) {
+  createBoardRectangles(offsetX: number, offsetY: number, tileSize: number) {
     const lightColor = COLORS.chessboard.light
     const darkColor = COLORS.chessboard.dark
 
@@ -370,11 +411,11 @@ export class ChessBoard extends Scene {
 
       for (let col = 0; col < BOARD_SIZE; col += 1) {
         const isLight = (row + col) % 2 === 0
-        const x = offsetX + col * TILE_SIZE
-        const y = offsetY + this.getViewRow(row) * TILE_SIZE
+        const x = offsetX + col * tileSize
+        const y = offsetY + this.getViewRow(row) * tileSize
         const color = isLight ? lightColor : darkColor
 
-        const square = new BoardSquare(this, row, col, x, y, TILE_SIZE, color)
+        const square = new BoardSquare(this, row, col, x, y, tileSize, color)
         boardRow.push(square)
       }
 
@@ -384,13 +425,13 @@ export class ChessBoard extends Scene {
     return board
   }
 
-  createPieceSprites(pieceStates: PieceState[], offsetX: number, offsetY: number) {
+  createPieceSprites(pieceStates: PieceState[], offsetX: number, offsetY: number, tileSize: number) {
     return pieceStates.map((pieceState) => {
-      const x = offsetX + pieceState.position.col * TILE_SIZE + TILE_SIZE / 2
-      const y = offsetY + this.getViewRow(pieceState.position.row) * TILE_SIZE + TILE_SIZE / 2
+      const x = offsetX + pieceState.position.col * tileSize + tileSize / 2
+      const y = offsetY + this.getViewRow(pieceState.position.row) * tileSize + tileSize / 2
 
       const piece = new Piece(this, x, y, pieceState.textureKey, pieceState.id)
-      piece.fitToCell(TILE_SIZE, 10)
+      piece.fitToCell(tileSize, 10)
       piece.setInteractive({ useHandCursor: true })
 
       return piece
@@ -599,7 +640,7 @@ export class ChessBoard extends Scene {
 
     pieceSprite.setTexture(newTextureKey)
     pieceSprite.textureKey = newTextureKey
-    pieceSprite.fitToCell(TILE_SIZE, 10)
+    pieceSprite.fitToCell(this.getBoardMetrics().tileSize, 10)
 
     this.isAwaitingPromotion = false
     this.closePromotionPopup()
@@ -829,8 +870,8 @@ export class ChessBoard extends Scene {
     }
 
     const boardMetrics = this.getBoardMetrics()
-    const x = boardMetrics.offsetX + pieceState.position.col * TILE_SIZE + TILE_SIZE / 2
-    const y = boardMetrics.offsetY + this.getViewRow(pieceState.position.row) * TILE_SIZE + TILE_SIZE / 2
+    const x = boardMetrics.offsetX + pieceState.position.col * boardMetrics.tileSize + boardMetrics.tileSize / 2
+    const y = boardMetrics.offsetY + this.getViewRow(pieceState.position.row) * boardMetrics.tileSize + boardMetrics.tileSize / 2
 
     pieceSprite.setPosition(x, y)
   }
