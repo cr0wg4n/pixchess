@@ -45,6 +45,82 @@ class ChessboardEffectsController {
     this.emitCaptureParticles(x, y, capturedColor)
   }
 
+  playKingDefeatStrike(kingSprite: Piece, onComplete: () => void) {
+    const lightning = this.scene.add.graphics().setDepth(90)
+    const flash = this.scene.add.rectangle(
+      this.scene.scale.width / 2,
+      this.scene.scale.height / 2,
+      this.scene.scale.width,
+      this.scene.scale.height,
+      0xFFFFFF,
+      0,
+    ).setDepth(80)
+
+    const drawLightning = () => {
+      lightning.clear()
+      lightning.lineStyle(6, 0x7FDBFF, 1)
+      lightning.beginPath()
+      lightning.moveTo(kingSprite.x + Phaser.Math.Between(-20, 20), -24)
+
+      let currentX = kingSprite.x + Phaser.Math.Between(-10, 10)
+      let currentY = 0
+
+      while (currentY < kingSprite.y - 18) {
+        currentX += Phaser.Math.Between(-22, 22)
+        currentY += Phaser.Math.Between(22, 34)
+        lightning.lineTo(currentX, currentY)
+      }
+
+      lightning.lineTo(kingSprite.x, kingSprite.y)
+      lightning.strokePath()
+    }
+
+    drawLightning()
+    this.scene.cameras.main.shake(260, 0.01)
+
+    this.scene.tweens.add({
+      targets: flash,
+      alpha: { from: 0, to: 0.75 },
+      duration: 90,
+      yoyo: true,
+      repeat: 1,
+      ease: 'Sine.easeOut',
+    })
+
+    this.scene.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 220,
+      onUpdate: () => {
+        drawLightning()
+      },
+    })
+
+    this.scene.tweens.add({
+      targets: kingSprite,
+      angle: { from: -8, to: 8 },
+      duration: 70,
+      yoyo: true,
+      repeat: 3,
+      ease: 'Sine.easeInOut',
+    })
+
+    this.scene.tweens.add({
+      targets: kingSprite,
+      alpha: 0,
+      scaleX: kingSprite.scaleX * 0.15,
+      scaleY: kingSprite.scaleY * 0.15,
+      duration: 320,
+      delay: 220,
+      ease: 'Cubic.easeIn',
+      onComplete: () => {
+        lightning.destroy()
+        flash.destroy()
+        onComplete()
+      },
+    })
+  }
+
   tweenPieceTo(pieceSprite: Piece, pieceColor: PieceColor, row: number, col: number) {
     const startX = pieceSprite.x
     const startY = pieceSprite.y

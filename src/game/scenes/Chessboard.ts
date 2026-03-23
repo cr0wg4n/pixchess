@@ -1,4 +1,7 @@
-import type { AILevel } from 'js-chess-engine'
+import type {
+  ChessAiAdapter,
+  ChessAiLevel,
+} from '@/game/ai/chessAi'
 import type {
   CheckStatus,
   EnPassantState,
@@ -6,13 +9,14 @@ import type {
 } from '@/game/domain/pieceMoves'
 import type { ChessBoardSceneData } from '@/game/helpers/chessboardSession'
 import type { PieceState } from '@/game/types'
-import { ai } from 'js-chess-engine'
 import {
   Scene,
 } from 'phaser'
 import {
+  CHESS_MOVE_EFFECTS,
 } from '@/config/chessEffects'
 import { COLORS } from '@/config/ui'
+import { createChessAiAdapter } from '@/game/ai/chessAIEngine'
 import { ChessClock } from '@/game/domain/chessClock'
 import { applyMove } from '@/game/domain/moveEngine'
 import {
@@ -48,6 +52,7 @@ import {
 const BOARD_SIZE = 8
 const TILE_SIZE = 60
 const PROFILE_MARGIN = 50
+const GAME_OVER_DELAY_MS = 5000
 
 export class ChessBoard extends Scene {
   squares: BoardSquare[][] = []
@@ -60,6 +65,7 @@ export class ChessBoard extends Scene {
   checkStatus: CheckStatus = {
     inCheck: false,
     isCheckmate: false,
+    isDraw: false,
     kingPosition: null,
   }
 
@@ -85,11 +91,14 @@ export class ChessBoard extends Scene {
   interactionController: ChessboardInteractionController | null = null
   lastClockTickAt = 0
   botEnabled = false
-  botLevel: AILevel = 2
+  botLevel: ChessAiLevel = 2
   botColor: PieceColor = PieceColor.BLACK
   isBotTurn = false
   botMoveTimerEvent: Phaser.Time.TimerEvent | null = null
+  gameOverTimerEvent: Phaser.Time.TimerEvent | null = null
+  aiEngine: ChessAiAdapter | null = null
   backMenuButton: Button | null = null
+  retrySceneData: ChessBoardSceneData = {}
 
   constructor() {
     super('ChessBoard')
@@ -97,6 +106,24 @@ export class ChessBoard extends Scene {
 
   init(data: ChessBoardSceneData = {}) {
     const sceneData = resolveChessBoardSceneData(data)
+    let retryPlayerColor = sceneData.playerColor
+
+    this.currentTurn = PieceColor.WHITE
+    this.checkStatus = {
+      inCheck: false,
+      isCheckmate: false,
+      isDraw: false,
+      kingPosition: null,
+    }
+    this.isGameFinished = false
+    this.isAwaitingPromotion = false
+    this.pendingPromotionSan = null
+    this.whiteCapturedPoints = 0
+    this.blackCapturedPoints = 0
+    this.gameOverTimerEvent?.remove()
+    this.gameOverTimerEvent = null
+    this.botMoveTimerEvent?.remove()
+    this.botMoveTimerEvent = null
 
     this.preloadPgn = sceneData.preloadPgn
     this.gameMinutes = sceneData.gameMinutes
@@ -104,14 +131,26 @@ export class ChessBoard extends Scene {
     this.whitePlayerName = sceneData.whitePlayerName
     this.blackPlayerName = sceneData.blackPlayerName
     this.botEnabled = sceneData.botEnabled
-    this.botLevel = sceneData.botLevel as AILevel
+    this.botLevel = sceneData.botLevel as ChessAiLevel
     if (this.botEnabled) {
       const humanIsWhite = sceneData.playerColor === 'white'
         || (sceneData.playerColor === 'random' && Math.random() < 0.5)
       this.botColor = humanIsWhite ? PieceColor.BLACK : PieceColor.WHITE
+      retryPlayerColor = humanIsWhite ? 'white' : 'black'
     }
     else {
       this.botColor = PieceColor.BLACK
+    }
+
+    this.retrySceneData = {
+      pgn: this.preloadPgn ?? undefined,
+      gameMinutes: this.gameMinutes,
+      incrementSeconds: this.incrementSeconds,
+      whitePlayer: sceneData.whitePlayerName,
+      blackPlayer: sceneData.blackPlayerName,
+      botEnabled: this.botEnabled,
+      botLevel: this.botLevel,
+      playerColor: retryPlayerColor,
     }
     // When bot is white, swap the display names so "You" always follows the human
     if (this.botEnabled && this.botColor === PieceColor.WHITE) {
@@ -139,6 +178,10 @@ export class ChessBoard extends Scene {
       this.clockTickEvent = null
       this.botMoveTimerEvent?.remove()
       this.botMoveTimerEvent = null
+      this.gameOverTimerEvent?.remove()
+      this.gameOverTimerEvent = null
+      this.aiEngine?.dispose()
+      this.aiEngine = null
       this.isBotTurn = false
     })
 
@@ -460,7 +503,17 @@ export class ChessBoard extends Scene {
 
     if (this.checkStatus.isCheckmate) {
       this.appendSanMove(sanBase)
-      this.endGameByCheckmate()
+      this.animateFinalMoveThen(moveResult.movedPiece.pieceId, moveResult.rookMove?.pieceId, () => {
+        this.endGameByCheckmate()
+      })
+      return
+    }
+
+    if (this.checkStatus.isDraw) {
+      this.appendSanMove(sanBase)
+      this.animateFinalMoveThen(moveResult.movedPiece.pieceId, moveResult.rookMove?.pieceId, () => {
+        this.endGameByDraw()
+      })
       return
     }
 
@@ -559,6 +612,11 @@ export class ChessBoard extends Scene {
       return
     }
 
+    if (this.checkStatus.isDraw) {
+      this.endGameByDraw()
+      return
+    }
+
     if (this.botEnabled && !this.isGameFinished && this.currentTurn === this.botColor) {
       this.scheduleBotMove()
     }
@@ -570,14 +628,13 @@ export class ChessBoard extends Scene {
     this.clockTickEvent = null
     this.pgnResult = this.currentTurn === PieceColor.WHITE ? '0-1' : '1-0'
     this.updateClockDisplays()
+    const loser = this.currentTurn
 
-    const winnerMessage = this.currentTurn === PieceColor.WHITE
+    const winnerMessage = loser === PieceColor.WHITE
       ? 'Black Wins!'
       : 'White Wins!'
 
-    this.scene.start('GameOver', {
-      message: winnerMessage,
-    })
+    this.playKingDefeatAnimation(loser, winnerMessage)
   }
 
   endGameByTimeout(loser: PieceColor) {
@@ -595,8 +652,89 @@ export class ChessBoard extends Scene {
       ? 'Black Wins on Time!'
       : 'White Wins on Time!'
 
-    this.scene.start('GameOver', {
-      message: winnerMessage,
+    this.playKingDefeatAnimation(loser, winnerMessage)
+  }
+
+  endGameByDraw() {
+    if (this.isGameFinished) {
+      return
+    }
+
+    this.isGameFinished = true
+    this.clockTickEvent?.remove()
+    this.clockTickEvent = null
+    this.pgnResult = '1/2-1/2'
+    this.updateClockDisplays()
+    this.playKingsDefeatAnimation([
+      PieceColor.WHITE,
+      PieceColor.BLACK,
+    ], 'Draw')
+  }
+
+  playKingDefeatAnimation(loser: PieceColor, winnerMessage: string) {
+    this.playKingsDefeatAnimation([loser], winnerMessage)
+  }
+
+  playKingsDefeatAnimation(colors: PieceColor[], message: string) {
+    if (!this.boardEffects) {
+      this.openGameOver(message)
+      return
+    }
+
+    const kingIds = [...new Set(
+      colors
+        .map((color) => {
+          const king = this.pieceStates.find(piece => (
+            piece.color === color && piece.type === PieceType.KING
+          ))
+
+          return king?.id ?? null
+        })
+        .filter((id): id is string => id !== null),
+    )]
+
+    const kingSprites = kingIds
+      .map(id => ({ id, sprite: this.getPieceSpriteById(id) }))
+      .filter(({ sprite }) => Boolean(sprite)) as { id: string, sprite: Piece }[]
+
+    if (kingSprites.length === 0) {
+      this.openGameOver(message)
+      return
+    }
+
+    let pending = kingSprites.length
+
+    for (const { id, sprite } of kingSprites) {
+      this.boardEffects.playKingDefeatStrike(sprite, () => {
+        const spriteIndex = this.pieces.findIndex(piece => piece.identifier === id)
+
+        if (spriteIndex >= 0) {
+          this.pieces.splice(spriteIndex, 1)
+        }
+
+        this.pieceStates = this.pieceStates.filter(piece => piece.id !== id)
+        sprite.destroy()
+
+        pending -= 1
+
+        if (pending === 0) {
+          this.openGameOver(message)
+        }
+      })
+    }
+  }
+
+  openGameOver(message: string) {
+    if (this.gameOverTimerEvent) {
+      return
+    }
+
+    this.gameOverTimerEvent = this.time.delayedCall(GAME_OVER_DELAY_MS, () => {
+      this.gameOverTimerEvent = null
+      this.scene.start('GameOver', {
+        message,
+        retryData: this.retrySceneData,
+      })
     })
   }
 
@@ -653,6 +791,50 @@ export class ChessBoard extends Scene {
     this.boardEffects?.tweenPieceTo(pieceSprite, pieceState.color, row, col)
   }
 
+  animateFinalMoveThen(movedPieceId: string, rookPieceId: string | undefined, onComplete: () => void) {
+    if (!this.boardEffects) {
+      this.syncPieceSpriteToBoardState(movedPieceId)
+
+      if (rookPieceId) {
+        this.syncPieceSpriteToBoardState(rookPieceId)
+      }
+
+      onComplete()
+      return
+    }
+
+    const movedPieceState = this.getPieceStateById(movedPieceId)
+
+    if (movedPieceState) {
+      this.tweenPieceTo(movedPieceId, movedPieceState.position.row, movedPieceState.position.col)
+    }
+
+    if (rookPieceId) {
+      const rookPieceState = this.getPieceStateById(rookPieceId)
+
+      if (rookPieceState) {
+        this.tweenPieceTo(rookPieceId, rookPieceState.position.row, rookPieceState.position.col)
+      }
+    }
+
+    this.time.delayedCall(CHESS_MOVE_EFFECTS.tweenDurationMs + 20, onComplete)
+  }
+
+  syncPieceSpriteToBoardState(pieceId: string) {
+    const pieceSprite = this.getPieceSpriteById(pieceId)
+    const pieceState = this.getPieceStateById(pieceId)
+
+    if (!pieceSprite || !pieceState) {
+      return
+    }
+
+    const boardMetrics = this.getBoardMetrics()
+    const x = boardMetrics.offsetX + pieceState.position.col * TILE_SIZE + TILE_SIZE / 2
+    const y = boardMetrics.offsetY + this.getViewRow(pieceState.position.row) * TILE_SIZE + TILE_SIZE / 2
+
+    pieceSprite.setPosition(x, y)
+  }
+
   getPieceStateById(pieceId: string) {
     return this.pieceStates.find(piece => piece.id === pieceId)
   }
@@ -697,20 +879,18 @@ export class ChessBoard extends Scene {
   }
 
   executeBotMove() {
-    const fen = buildFen(
-      this.pieceStates,
-      this.currentTurn,
-      this.movedPieceIds,
-      this.enPassant,
-      Math.floor(this.pgnMoves.length / 2) + 1,
-    )
-
     try {
-      const result = ai(fen, { level: this.botLevel, randomness: 20 })
-      const entries = Object.entries(result.move as Record<string, string>)
+      const aiEngine = this.getAiEngine()
 
-      if (entries.length > 0) {
-        const [fromSquare, toSquare] = entries[0]
+      aiEngine.syncPosition(this.buildCurrentFen())
+
+      const decision = aiEngine.decideMove({
+        level: this.botLevel,
+        randomness: 20,
+      })
+
+      if (decision.move) {
+        const { fromSquare, toSquare } = decision.move
         const fromCoord = squareToCoord(fromSquare)
         const toCoord = squareToCoord(toSquare)
         const piece = this.pieceStates.find(
@@ -727,6 +907,28 @@ export class ChessBoard extends Scene {
     }
 
     this.isBotTurn = false
+  }
+
+  getCurrentFullMoveNumber() {
+    return Math.floor(this.pgnMoves.length / 2) + 1
+  }
+
+  buildCurrentFen() {
+    return buildFen(
+      this.pieceStates,
+      this.currentTurn,
+      this.movedPieceIds,
+      this.enPassant,
+      this.getCurrentFullMoveNumber(),
+    )
+  }
+
+  getAiEngine() {
+    if (!this.aiEngine) {
+      this.aiEngine = createChessAiAdapter()
+    }
+
+    return this.aiEngine
   }
 
   getExportablePgn() {

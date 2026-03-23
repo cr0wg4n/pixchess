@@ -33,7 +33,7 @@ export class MainMenu extends Scene {
     // --- Mode selection view ---
     const twoPlayersBtn = new Button(this, {
       x: 170,
-      y: 400,
+      y: 470,
       label: '▸  2 Players',
       fontSize: FONT_SIZES.sm,
       align: 'left',
@@ -49,7 +49,7 @@ export class MainMenu extends Scene {
 
     const vsBotBtn = new Button(this, {
       x: 170,
-      y: 470,
+      y: 400,
       label: '▸  vs Bot',
       fontSize: FONT_SIZES.sm,
       align: 'left',

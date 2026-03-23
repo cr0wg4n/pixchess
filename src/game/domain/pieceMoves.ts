@@ -58,6 +58,7 @@ interface MoveGenerationContext {
 interface CheckStatus {
   inCheck: boolean
   isCheckmate: boolean
+  isDraw: boolean
   kingPosition: BoardCoordinate | null
 }
 
@@ -559,27 +560,29 @@ function getCheckStatus(color: PieceColor, pieces: PieceState[], context?: MoveG
     return {
       inCheck: false,
       isCheckmate: false,
+      isDraw: false,
       kingPosition: null,
     }
   }
 
   const inCheck = isKingInCheck(color, pieces)
+  const hasAnyLegalMove = pieces
+    .filter(piece => piece.color === color)
+    .some(piece => getLegalMovesForPiece(piece, pieces, context).length > 0)
 
   if (!inCheck) {
     return {
       inCheck: false,
       isCheckmate: false,
+      isDraw: !hasAnyLegalMove,
       kingPosition: king.position,
     }
   }
 
-  const hasAnyLegalMove = pieces
-    .filter(piece => piece.color === color)
-    .some(piece => getLegalMovesForPiece(piece, pieces, context).length > 0)
-
   return {
     inCheck: true,
     isCheckmate: !hasAnyLegalMove,
+    isDraw: false,
     kingPosition: king.position,
   }
 }
