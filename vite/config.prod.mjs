@@ -19,6 +19,11 @@ function phasermsg() {
 
 export default defineConfig({
   base: './',
+  resolve: {
+    alias: {
+      '@': '/src',
+    },
+  },
   logLevel: 'warning',
   build: {
     rollupOptions: {

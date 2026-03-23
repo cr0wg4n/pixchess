@@ -21,6 +21,7 @@ import {
 import { getPieceValue } from '@/game/domain/pieceValues'
 import { ChessboardEffectsController } from '@/game/effects/ChessboardEffectsController'
 import { BoardSquare } from '@/game/elements/BoardSquare'
+import { Button } from '@/game/elements/Button'
 import { Piece } from '@/game/elements/Piece'
 import { PlayerProfile } from '@/game/elements/PlayerProfile'
 import {
@@ -88,6 +89,7 @@ export class ChessBoard extends Scene {
   botColor: PieceColor = PieceColor.BLACK
   isBotTurn = false
   botMoveTimerEvent: Phaser.Time.TimerEvent | null = null
+  backMenuButton: Button | null = null
 
   constructor() {
     super('ChessBoard')
@@ -174,6 +176,7 @@ export class ChessBoard extends Scene {
       boardMetrics.offsetY,
     )
     this.createPlayerProfiles(boardMetrics.offsetX, boardMetrics.offsetY)
+    this.createBackMenuButton(boardMetrics.offsetX, boardMetrics.offsetY)
     this.startChessClock()
 
     this.bindBoardInteractions()
@@ -183,6 +186,24 @@ export class ChessBoard extends Scene {
     if (this.botEnabled && !this.isGameFinished && this.currentTurn === this.botColor) {
       this.scheduleBotMove()
     }
+  }
+
+  createBackMenuButton(offsetX: number, offsetY: number) {
+    this.backMenuButton?.destroy()
+
+    this.backMenuButton = new Button(this, {
+      x: offsetX + BOARD_SIZE * TILE_SIZE + 28,
+      y: offsetY + BOARD_SIZE * TILE_SIZE + 50,
+      label: '< Menu',
+      fontSize: 20,
+      strokeThickness: 4,
+      originX: 1,
+      originY: 0,
+      depth: 2,
+      onClick: () => {
+        this.scene.start('MainMenu')
+      },
+    })
   }
 
   startChessClock() {
