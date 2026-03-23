@@ -1,3 +1,4 @@
+import type { AILevel } from 'js-chess-engine'
 import type {
   CheckStatus,
   EnPassantState,
@@ -5,6 +6,7 @@ import type {
 } from '@/game/domain/pieceMoves'
 import type { ChessBoardSceneData } from '@/game/helpers/chessboardSession'
 import type { PieceState } from '@/game/types'
+import { ai } from 'js-chess-engine'
 import {
   Scene,
 } from 'phaser'
@@ -33,6 +35,7 @@ import {
   resolveChessBoardSceneData,
 } from '@/game/helpers/chessboardSession'
 import { buildAnnotatedSan, buildSanBase } from '@/game/helpers/chessNotation'
+import { buildFen, squareToCoord } from '@/game/helpers/fenExport'
 import {
   exportPgn,
 } from '@/game/helpers/pgn'
@@ -80,6 +83,11 @@ export class ChessBoard extends Scene {
   boardEffects: ChessboardEffectsController | null = null
   interactionController: ChessboardInteractionController | null = null
   lastClockTickAt = 0
+  botEnabled = false
+  botLevel: AILevel = 2
+  botColor: PieceColor = PieceColor.BLACK
+  isBotTurn = false
+  botMoveTimerEvent: Phaser.Time.TimerEvent | null = null
 
   constructor() {
     super('ChessBoard')
@@ -93,6 +101,22 @@ export class ChessBoard extends Scene {
     this.incrementSeconds = sceneData.incrementSeconds
     this.whitePlayerName = sceneData.whitePlayerName
     this.blackPlayerName = sceneData.blackPlayerName
+    this.botEnabled = sceneData.botEnabled
+    this.botLevel = sceneData.botLevel as AILevel
+    if (this.botEnabled) {
+      const humanIsWhite = sceneData.playerColor === 'white'
+        || (sceneData.playerColor === 'random' && Math.random() < 0.5)
+      this.botColor = humanIsWhite ? PieceColor.BLACK : PieceColor.WHITE
+    }
+    else {
+      this.botColor = PieceColor.BLACK
+    }
+    // When bot is white, swap the display names so "You" always follows the human
+    if (this.botEnabled && this.botColor === PieceColor.WHITE) {
+      this.whitePlayerName = sceneData.blackPlayerName
+      this.blackPlayerName = sceneData.whitePlayerName
+    }
+    this.isBotTurn = false
     this.clock = new ChessClock({
       gameMinutes: this.gameMinutes,
       incrementSeconds: this.incrementSeconds,
@@ -111,6 +135,9 @@ export class ChessBoard extends Scene {
       this.clock = null
       this.clockTickEvent?.remove()
       this.clockTickEvent = null
+      this.botMoveTimerEvent?.remove()
+      this.botMoveTimerEvent = null
+      this.isBotTurn = false
     })
 
     const boardMetrics = this.getBoardMetrics()
@@ -152,6 +179,10 @@ export class ChessBoard extends Scene {
     this.bindBoardInteractions()
     this.bindPieceInteractions()
     this.refreshCheckStatus()
+
+    if (this.botEnabled && !this.isGameFinished && this.currentTurn === this.botColor) {
+      this.scheduleBotMove()
+    }
   }
 
   startChessClock() {
@@ -259,7 +290,14 @@ export class ChessBoard extends Scene {
   createBoardRectangles(offsetX: number, offsetY: number) {
     const lightColor = COLORS.chessboard.light
     const darkColor = COLORS.chessboard.dark
-    this.randomizeBoardPerspective()
+
+    if (this.botEnabled) {
+      // Human is always at the bottom: white-at-bottom iff the human plays white
+      this.whiteAtBottom = this.botColor === PieceColor.BLACK
+    }
+    else {
+      this.randomizeBoardPerspective()
+    }
 
     const board: BoardSquare[][] = []
 
@@ -299,12 +337,16 @@ export class ChessBoard extends Scene {
     for (const row of this.squares) {
       for (const square of row) {
         square.on('pointerover', () => {
+          if (this.isBotTurn)
+            return
           this.interactionController?.handleSquareHover(square.row, square.col, this.getInteractionState())
         })
         square.on('pointerout', () => {
           this.interactionController?.clearHoverPreview(this.getInteractionState())
         })
         square.on('pointerdown', () => {
+          if (this.isBotTurn)
+            return
           this.interactionController?.handleSquareSelection(square.row, square.col, this.getInteractionState(), {
             moveSelectedPieceTo: (row, col) => {
               this.moveSelectedPieceTo(row, col)
@@ -318,6 +360,8 @@ export class ChessBoard extends Scene {
   bindPieceInteractions() {
     for (const piece of this.pieces) {
       piece.on('pointerover', () => {
+        if (this.isBotTurn)
+          return
         this.interactionController?.setSquareHoverForPiece(piece.identifier, true, this.getInteractionState())
         this.interactionController?.handlePieceHover(piece.identifier, this.getInteractionState())
       })
@@ -326,6 +370,8 @@ export class ChessBoard extends Scene {
         this.interactionController?.clearHoverPreview(this.getInteractionState())
       })
       piece.on('pointerdown', () => {
+        if (this.isBotTurn)
+          return
         this.interactionController?.handlePieceSelection(piece.identifier, this.getInteractionState(), {
           moveSelectedPieceTo: (row, col) => {
             this.moveSelectedPieceTo(row, col)
@@ -336,13 +382,17 @@ export class ChessBoard extends Scene {
   }
 
   moveSelectedPieceTo(row: number, col: number) {
-    if (this.isGameFinished || this.isAwaitingPromotion) {
-      return
-    }
-
     const selectedPieceId = this.interactionController?.getSelectedPieceId() ?? null
 
     if (!selectedPieceId) {
+      return
+    }
+
+    this.performMove(selectedPieceId, row, col, false)
+  }
+
+  performMove(pieceId: string, targetRow: number, targetCol: number, isBotMove: boolean) {
+    if (this.isGameFinished || this.isAwaitingPromotion) {
       return
     }
 
@@ -360,12 +410,14 @@ export class ChessBoard extends Scene {
       enPassant: this.enPassant,
       currentTurn: this.currentTurn,
     }, {
-      pieceId: selectedPieceId,
-      target: { row, col },
+      pieceId,
+      target: { row: targetRow, col: targetCol },
     })
 
     if (!moveResult) {
-      this.interactionController?.clearSelection(this.getInteractionState())
+      if (!isBotMove) {
+        this.interactionController?.clearSelection(this.getInteractionState())
+      }
       return
     }
 
@@ -400,16 +452,29 @@ export class ChessBoard extends Scene {
     const promotionPiece = this.getPromotablePawn(moveResult.movedPiece.pieceId)
 
     if (promotionPiece) {
-      this.isAwaitingPromotion = true
-      this.pendingPromotionSan = sanBase
-      this.openPromotionPopup(promotionPiece.id, promotionPiece.color)
-      this.interactionController?.clearSelection(this.getInteractionState())
+      if (isBotMove) {
+        // Bot always promotes to queen — no popup needed
+        this.pendingPromotionSan = sanBase
+        this.promotePawn(promotionPiece.id, PieceType.QUEEN)
+      }
+      else {
+        this.isAwaitingPromotion = true
+        this.pendingPromotionSan = sanBase
+        this.openPromotionPopup(promotionPiece.id, promotionPiece.color)
+        this.interactionController?.clearSelection(this.getInteractionState())
+      }
       return
     }
 
     this.appendSanMove(sanBase)
 
-    this.interactionController?.clearSelection(this.getInteractionState())
+    if (!isBotMove) {
+      this.interactionController?.clearSelection(this.getInteractionState())
+    }
+
+    if (this.botEnabled && !this.isGameFinished && this.currentTurn === this.botColor) {
+      this.scheduleBotMove()
+    }
   }
 
   getPromotablePawn(pieceId: string) {
@@ -470,6 +535,11 @@ export class ChessBoard extends Scene {
 
     if (this.checkStatus.isCheckmate) {
       this.endGameByCheckmate()
+      return
+    }
+
+    if (this.botEnabled && !this.isGameFinished && this.currentTurn === this.botColor) {
+      this.scheduleBotMove()
     }
   }
 
@@ -595,6 +665,47 @@ export class ChessBoard extends Scene {
 
     this.pgnMoves.push(annotatedSan)
     this.pgnResult = '*'
+  }
+
+  scheduleBotMove() {
+    this.isBotTurn = true
+    this.botMoveTimerEvent?.remove()
+    this.botMoveTimerEvent = this.time.delayedCall(400, () => {
+      this.executeBotMove()
+    })
+  }
+
+  executeBotMove() {
+    const fen = buildFen(
+      this.pieceStates,
+      this.currentTurn,
+      this.movedPieceIds,
+      this.enPassant,
+      Math.floor(this.pgnMoves.length / 2) + 1,
+    )
+
+    try {
+      const result = ai(fen, { level: this.botLevel, randomness: 20 })
+      const entries = Object.entries(result.move as Record<string, string>)
+
+      if (entries.length > 0) {
+        const [fromSquare, toSquare] = entries[0]
+        const fromCoord = squareToCoord(fromSquare)
+        const toCoord = squareToCoord(toSquare)
+        const piece = this.pieceStates.find(
+          p => p.position.row === fromCoord.row && p.position.col === fromCoord.col,
+        )
+
+        if (piece) {
+          this.performMove(piece.id, toCoord.row, toCoord.col, true)
+        }
+      }
+    }
+    catch (err) {
+      console.error('Bot move failed:', err)
+    }
+
+    this.isBotTurn = false
   }
 
   getExportablePgn() {

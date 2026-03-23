@@ -19,6 +19,7 @@
     "lint:fix": "eslint --fix"
   },
   "dependencies": {
+    "js-chess-engine": "^2.4.6",
     "phaser": "^3.90.0",
     "terser": "^5.39.0"
   },

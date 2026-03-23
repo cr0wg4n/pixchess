@@ -15,6 +15,9 @@ interface ChessBoardSceneData {
   incrementSeconds?: number
   whitePlayer?: string
   blackPlayer?: string
+  botEnabled?: boolean
+  botLevel?: number
+  playerColor?: 'white' | 'black' | 'random'
 }
 
 interface ResolvedChessBoardSceneData {
@@ -23,6 +26,9 @@ interface ResolvedChessBoardSceneData {
   incrementSeconds: number
   whitePlayerName: string
   blackPlayerName: string
+  botEnabled: boolean
+  botLevel: number
+  playerColor: 'white' | 'black' | 'random'
 }
 
 interface ChessBoardGameState {
@@ -69,6 +75,13 @@ function resolveChessBoardSceneData(data: ChessBoardSceneData = {}): ResolvedChe
       : DEFAULT_INCREMENT_SECONDS,
     whitePlayerName: resolvePlayerName(data.whitePlayer, DEFAULT_WHITE_PLAYER_NAME),
     blackPlayerName: resolvePlayerName(data.blackPlayer, DEFAULT_BLACK_PLAYER_NAME),
+    botEnabled: data.botEnabled === true,
+    botLevel: Number.isFinite(data.botLevel)
+      ? Math.max(1, Math.min(5, Math.floor(Number(data.botLevel))))
+      : 2,
+    playerColor: (['white', 'black', 'random'] as const).includes(data.playerColor as 'white' | 'black' | 'random')
+      ? data.playerColor as 'white' | 'black' | 'random'
+      : 'random',
   }
 }
 

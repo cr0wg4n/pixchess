@@ -5,6 +5,7 @@
     "": {
       "name": "template-vite-ts",
       "dependencies": {
+        "js-chess-engine": "^2.4.6",
         "phaser": "^3.90.0",
         "terser": "^5.39.0",
       },
@@ -423,6 +424,8 @@
     "is-glob": ["is-glob@4.0.3", "", { "dependencies": { "is-extglob": "^2.1.1" } }, "sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg=="],
 
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
+
+    "js-chess-engine": ["js-chess-engine@2.4.6", "", {}, "sha512-OKvWKICifXLjUilGzT5RstUv9iGpk04PjGpTyVT0lMlxX2HptoXZ2Q9hNicidnYjFcR7FHpnXFVwreDSF6a5Ng=="],
 
     "jsdoc-type-pratt-parser": ["jsdoc-type-pratt-parser@7.1.1", "", {}, "sha512-/2uqY7x6bsrpi3i9LVU6J89352C0rpMk0as8trXxCtvd4kPk1ke/Eyif6wqfSLvoNJqcDG9Vk4UsXgygzCt2xA=="],
 

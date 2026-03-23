@@ -22,6 +22,20 @@ const config: Phaser.Types.Core.GameConfig = {
     GameOver,
   ],
   pixelArt: true,
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: 768,
+    height: 768,
+    min: {
+      width: 320,
+      height: 320,
+    },
+    max: {
+      width: 1200,
+      height: 1200,
+    },
+  },
 }
 
 function StartGame(parent: string) {
