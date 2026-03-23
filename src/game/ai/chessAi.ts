@@ -18,6 +18,6 @@ export interface ChessAiDecideOptions {
 
 export interface ChessAiAdapter {
   syncPosition: (fen: string) => void
-  decideMove: (options: ChessAiDecideOptions) => ChessAiDecision
+  decideMove: (options: ChessAiDecideOptions) => Promise<ChessAiDecision>
   dispose: () => void
 }

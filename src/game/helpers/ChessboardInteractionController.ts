@@ -259,6 +259,7 @@ class ChessboardInteractionController {
             CHESS_HIGHLIGHTS.selectedPiece.strokeColor,
             CHESS_HIGHLIGHTS.selectedPiece.fillColor,
             CHESS_HIGHLIGHTS.selectedPiece.fillAlpha,
+            0,
           )
           continue
         }

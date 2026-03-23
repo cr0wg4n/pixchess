@@ -874,17 +874,32 @@ export class ChessBoard extends Scene {
     this.isBotTurn = true
     this.botMoveTimerEvent?.remove()
     this.botMoveTimerEvent = this.time.delayedCall(400, () => {
-      this.executeBotMove()
+      void this.executeBotMove()
     })
   }
 
-  executeBotMove() {
+  async executeBotMove() {
+    const canvas = this.game.canvas
+    const body = this.game.canvas?.ownerDocument?.body
+    const previousCanvasCursor = canvas?.style.getPropertyValue('cursor')
+    const previousCanvasCursorPriority = canvas?.style.getPropertyPriority('cursor')
+    const previousCursor = body?.style.cursor
+    const previousCursorPriority = body?.style.getPropertyPriority('cursor')
+
+    if (canvas) {
+      canvas.style.setProperty('cursor', 'wait', 'important')
+    }
+
+    if (body) {
+      body.style.setProperty('cursor', 'wait', 'important')
+    }
+
     try {
       const aiEngine = this.getAiEngine()
 
       aiEngine.syncPosition(this.buildCurrentFen())
 
-      const decision = aiEngine.decideMove({
+      const decision = await aiEngine.decideMove({
         level: this.botLevel,
         randomness: 20,
       })
@@ -906,7 +921,27 @@ export class ChessBoard extends Scene {
       console.error('Bot move failed:', err)
     }
 
-    this.isBotTurn = false
+    finally {
+      this.isBotTurn = false
+
+      if (canvas) {
+        if (previousCanvasCursor) {
+          canvas.style.setProperty('cursor', previousCanvasCursor, previousCanvasCursorPriority)
+        }
+        else {
+          canvas.style.removeProperty('cursor')
+        }
+      }
+
+      if (body) {
+        if (previousCursor) {
+          body.style.setProperty('cursor', previousCursor, previousCursorPriority)
+        }
+        else {
+          body.style.removeProperty('cursor')
+        }
+      }
+    }
   }
 
   getCurrentFullMoveNumber() {

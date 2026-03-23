@@ -1,6 +1,7 @@
 import type { Scene } from 'phaser'
 import type { Piece } from '@/game/elements/Piece'
 import { CHESS_CAPTURE_EFFECTS, CHESS_MOVE_EFFECTS } from '@/config/chessEffects'
+import { COLORS } from '@/config/ui'
 import { getPieceValue } from '@/game/domain/pieceValues'
 import {
   PieceColor,
@@ -52,27 +53,40 @@ class ChessboardEffectsController {
       this.scene.scale.height / 2,
       this.scene.scale.width,
       this.scene.scale.height,
-      0xFFFFFF,
+      COLORS.chessEffects.kingDefeat.flash,
       0,
     ).setDepth(80)
 
     const drawLightning = () => {
       lightning.clear()
-      lightning.lineStyle(6, 0x7FDBFF, 1)
-      lightning.beginPath()
-      lightning.moveTo(kingSprite.x + Phaser.Math.Between(-20, 20), -24)
 
-      let currentX = kingSprite.x + Phaser.Math.Between(-10, 10)
-      let currentY = 0
+      const drawBolt = (lineWidth: number, color: number, alpha: number, horizontalJitter = 22) => {
+        lightning.lineStyle(lineWidth, color, alpha)
+        lightning.beginPath()
+        lightning.moveTo(kingSprite.x + Phaser.Math.Between(-24, 24), -24)
 
-      while (currentY < kingSprite.y - 18) {
-        currentX += Phaser.Math.Between(-22, 22)
-        currentY += Phaser.Math.Between(22, 34)
-        lightning.lineTo(currentX, currentY)
+        let currentX = kingSprite.x + Phaser.Math.Between(-12, 12)
+        let currentY = 0
+
+        while (currentY < kingSprite.y - 18) {
+          currentX += Phaser.Math.Between(-horizontalJitter, horizontalJitter)
+          currentY += Phaser.Math.Between(18, 32)
+          lightning.lineTo(currentX, currentY)
+        }
+
+        lightning.lineTo(kingSprite.x + Phaser.Math.Between(-5, 5), kingSprite.y)
+        lightning.strokePath()
       }
 
-      lightning.lineTo(kingSprite.x, kingSprite.y)
-      lightning.strokePath()
+      // Primary strike body.
+      drawBolt(7, COLORS.chessEffects.kingDefeat.lightning.primary, 1, 24)
+
+      // Additional nearby branches for a denser thunder effect.
+      drawBolt(4, COLORS.chessEffects.kingDefeat.lightning.primary, 0.85, 30)
+      drawBolt(3, COLORS.chessEffects.kingDefeat.lightning.primary, 0.72, 34)
+
+      // Purple accent branch overlay.
+      drawBolt(3, COLORS.chessEffects.kingDefeat.lightning.accent, 0.9, 28)
     }
 
     drawLightning()
@@ -105,20 +119,66 @@ class ChessboardEffectsController {
       ease: 'Sine.easeInOut',
     })
 
-    this.scene.tweens.add({
-      targets: kingSprite,
-      alpha: 0,
-      scaleX: kingSprite.scaleX * 0.15,
-      scaleY: kingSprite.scaleY * 0.15,
-      duration: 320,
-      delay: 220,
-      ease: 'Cubic.easeIn',
-      onComplete: () => {
+    this.scene.time.delayedCall(220, () => {
+      this.emitKingShatterParticles(kingSprite)
+
+      this.scene.tweens.add({
+        targets: kingSprite,
+        alpha: 0,
+        duration: 90,
+        ease: 'Sine.easeIn',
+      })
+
+      this.scene.time.delayedCall(360, () => {
         lightning.destroy()
         flash.destroy()
         onComplete()
-      },
+      })
     })
+  }
+
+  private emitKingShatterParticles(kingSprite: Piece) {
+    const shardColor = kingSprite.identifier.startsWith('white-')
+      ? CHESS_CAPTURE_EFFECTS.particles.color.light
+      : CHESS_CAPTURE_EFFECTS.particles.color.dark
+    const shardCount = 48
+    const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
+    const spread = this.tileSize * 0.22
+
+    for (let index = 0; index < shardCount; index += 1) {
+      const spawnX = kingSprite.x + randomBetween(-spread, spread)
+      const spawnY = kingSprite.y + randomBetween(-spread, spread)
+      const width = randomBetween(2.4, 5.8)
+      const height = randomBetween(2.4, 5.8)
+      const shard = this.scene.add.rectangle(
+        spawnX,
+        spawnY,
+        width,
+        height,
+        shardColor,
+        0.95,
+      )
+      shard.setDepth(95)
+
+      const angle = randomBetween(0, Math.PI * 2)
+      const distance = randomBetween(this.tileSize * 0.38, this.tileSize * 1.05)
+      const targetX = spawnX + Math.cos(angle) * distance
+      const targetY = spawnY + Math.sin(angle) * distance
+
+      this.scene.tweens.add({
+        targets: shard,
+        x: targetX,
+        y: targetY,
+        angle: randomBetween(-320, 320),
+        alpha: 0,
+        scale: randomBetween(0.3, 0.7),
+        duration: randomBetween(280, 560),
+        ease: 'Cubic.easeOut',
+        onComplete: () => {
+          shard.destroy()
+        },
+      })
+    }
   }
 
   tweenPieceTo(pieceSprite: Piece, pieceColor: PieceColor, row: number, col: number) {

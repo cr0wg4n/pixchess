@@ -36,6 +36,13 @@ const COLORS = {
         dark: transformColorHex2Number('#27303A'),
       },
     },
+    kingDefeat: {
+      flash: transformColorHex2Number('#FFFFFF'),
+      lightning: {
+        primary: transformColorHex2Number('#B7F2FF'),
+        accent: transformColorHex2Number('#FF6DF0'),
+      },
+    },
   },
   promotionPopup: {
     backdrop: transformColorHex2Number('#000000'),
