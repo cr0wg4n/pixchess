@@ -4,6 +4,7 @@ import {
   COLORS,
   FONT_SIZES,
 } from '@/config/ui'
+import { SfxEvent, SoundComposer } from '@/game/sounds/SoundComposer'
 
 interface ButtonOptions {
   x: number
@@ -20,10 +21,10 @@ interface ButtonOptions {
   style?: Omit<Phaser.Types.GameObjects.Text.TextStyle, 'fontSize' | 'color' | 'stroke' | 'strokeThickness' | 'align'>
 }
 
-const MENU_CLICK_SFX_KEY = 'sfx-menu-click'
-
 export class Button extends GameObjects.Text {
   constructor(scene: Scene, options: ButtonOptions) {
+    const soundComposer = new SoundComposer(scene)
+
     super(scene, options.x, options.y, options.label, {
       fontFamily: 'primary',
       fontSize: options.fontSize ?? FONT_SIZES.sm,
@@ -46,9 +47,7 @@ export class Button extends GameObjects.Text {
     }
 
     this.on('pointerdown', () => {
-      if (scene.cache.audio.exists(MENU_CLICK_SFX_KEY)) {
-        scene.sound.play(MENU_CLICK_SFX_KEY, { volume: 0.45 })
-      }
+      soundComposer.play(SfxEvent.MenuClick)
 
       options.onClick?.()
     })

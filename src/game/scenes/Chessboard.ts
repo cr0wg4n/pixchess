@@ -47,6 +47,7 @@ import { buildFen, squareToCoord } from '@/game/helpers/fenExport'
 import {
   exportPgn,
 } from '@/game/helpers/pgn'
+import { SfxEvent, SoundComposer } from '@/game/sounds/SoundComposer'
 import {
   PieceColor,
   PieceType,
@@ -66,12 +67,6 @@ const MENU_BUTTON_SPACE_MOBILE = 56
 const MOBILE_BREAKPOINT = 600
 const MOBILE_TILE_UPSCALE = 1.5
 const GAME_OVER_DELAY_MS = 5000
-const CHESS_SFX = {
-  move: 'sfx-chess-move',
-  capture: 'sfx-chess-capture',
-  threat: 'sfx-chess-threat',
-  end: 'sfx-chess-end',
-} as const
 
 export class ChessBoard extends Scene {
   squares: BoardSquare[][] = []
@@ -118,14 +113,7 @@ export class ChessBoard extends Scene {
   aiEngine: ChessAiAdapter | null = null
   backMenuButton: Button | null = null
   retrySceneData: ChessBoardSceneData = {}
-
-  playChessSfx(key: keyof typeof CHESS_SFX, config?: Phaser.Types.Sound.SoundConfig) {
-    if (!this.sound || !this.cache.audio.exists(CHESS_SFX[key])) {
-      return
-    }
-
-    this.sound.play(CHESS_SFX[key], config)
-  }
+  soundComposer: SoundComposer | null = null
 
   constructor() {
     super('ChessBoard')
@@ -210,7 +198,10 @@ export class ChessBoard extends Scene {
       this.aiEngine?.dispose()
       this.aiEngine = null
       this.isBotTurn = false
+      this.soundComposer = null
     })
+
+    this.soundComposer = new SoundComposer(this)
 
     const boardMetrics = this.getBoardMetrics()
 
@@ -555,10 +546,10 @@ export class ChessBoard extends Scene {
     this.refreshCheckStatus()
 
     if (moveResult.capturedPieceIds.length > 0) {
-      this.playChessSfx('capture', { volume: 0.6 })
+      this.soundComposer?.play(SfxEvent.ChessCapture)
     }
     else {
-      this.playChessSfx('move', { volume: 0.5 })
+      this.soundComposer?.play(SfxEvent.ChessMove)
     }
 
     const sanBase = buildSanBase(stateBeforeMove, moveResult)
@@ -662,7 +653,7 @@ export class ChessBoard extends Scene {
     pieceSprite.setTexture(newTextureKey)
     pieceSprite.textureKey = newTextureKey
     pieceSprite.fitToCell(this.getBoardMetrics().tileSize, 10)
-    this.playChessSfx('capture', { volume: 0.55 })
+    this.soundComposer?.play(SfxEvent.ChessCapture, { volume: 0.55 })
 
     this.isAwaitingPromotion = false
     this.closePromotionPopup()
@@ -697,7 +688,7 @@ export class ChessBoard extends Scene {
       ? 'Black Wins!'
       : 'White Wins!'
 
-    this.playChessSfx('end', { volume: 0.65 })
+    this.soundComposer?.play(SfxEvent.ChessEnd)
 
     this.playKingDefeatAnimation(loser, winnerMessage)
   }
@@ -717,7 +708,7 @@ export class ChessBoard extends Scene {
       ? 'Black Wins on Time!'
       : 'White Wins on Time!'
 
-    this.playChessSfx('end', { volume: 0.65 })
+    this.soundComposer?.play(SfxEvent.ChessEnd)
 
     this.playKingDefeatAnimation(loser, winnerMessage)
   }
@@ -732,7 +723,7 @@ export class ChessBoard extends Scene {
     this.clockTickEvent = null
     this.pgnResult = '1/2-1/2'
     this.updateClockDisplays()
-    this.playChessSfx('end', { volume: 0.65 })
+    this.soundComposer?.play(SfxEvent.ChessEnd)
     this.playKingsDefeatAnimation([
       PieceColor.WHITE,
       PieceColor.BLACK,
@@ -773,7 +764,7 @@ export class ChessBoard extends Scene {
     let pending = kingSprites.length
 
     for (const { id, sprite } of kingSprites) {
-      this.playChessSfx('threat', { volume: 0.55 })
+      this.soundComposer?.play(SfxEvent.ChessThreat)
       this.boardEffects.playKingDefeatStrike(sprite, () => {
         const spriteIndex = this.pieces.findIndex(piece => piece.identifier === id)
 

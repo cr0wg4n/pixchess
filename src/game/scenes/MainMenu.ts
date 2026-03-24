@@ -7,12 +7,15 @@ import {
 import { Button } from '@/game/elements/Button'
 import { ColorSelector } from '@/game/elements/ColorSelector'
 import { DifficultySelector, LEVELS } from '@/game/elements/DifficultySelector'
+import { SfxSoundBar } from '@/game/elements/SfxSoundBar'
 
 export class MainMenu extends Scene {
   title: GameObjects.Text
+  author: GameObjects.Text
   mainBackground: GameObjects.Image
   private difficultySelector: DifficultySelector | null = null
   private colorSelector: ColorSelector | null = null
+  private sfxSoundBar: SfxSoundBar | null = null
   private modeGroup: { setVisible: (v: boolean) => void }[] = []
   private botSetupGroup: { setVisible: (v: boolean) => void }[] = []
 
@@ -29,9 +32,11 @@ export class MainMenu extends Scene {
     this.scale.on('resize', this.fitBackgroundToViewport, this)
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.fitBackgroundToViewport, this)
+      this.sfxSoundBar?.destroy()
+      this.sfxSoundBar = null
     })
 
-    this.title = this.add.text(384, 200, 'PixChess', {
+    this.title = this.add.text(340, 160, 'PixChess', {
       fontFamily: 'primary',
       fontSize: FONT_SIZES.xl,
       color: COLORS.primary.text,
@@ -39,6 +44,20 @@ export class MainMenu extends Scene {
       strokeThickness: 10,
       align: 'center',
     }).setOrigin(0.5)
+
+    this.author = this.add.text(184, 225, 'by cr0wg4n', {
+      fontFamily: 'primary',
+      fontSize: FONT_SIZES.xs,
+      color: COLORS.primary.text,
+      stroke: COLORS.primary.textStroke,
+      strokeThickness: 5,
+      align: 'center',
+    }).setOrigin(0.5)
+
+    this.sfxSoundBar = new SfxSoundBar(this, {
+      x: 270,
+      y: 716,
+    })
 
     // --- Mode selection view ---
     const twoPlayersBtn = new Button(this, {
@@ -67,7 +86,7 @@ export class MainMenu extends Scene {
       onClick: () => this.showBotSetup(),
     })
 
-    this.modeGroup = [twoPlayersBtn, vsBotBtn]
+    this.modeGroup = [twoPlayersBtn, vsBotBtn, this.sfxSoundBar]
 
     // --- Bot setup view (hidden initially) ---
     this.difficultySelector = new DifficultySelector(this, {
@@ -137,6 +156,7 @@ export class MainMenu extends Scene {
       obj.setVisible(false)
     for (const obj of this.botSetupGroup)
       obj.setVisible(true)
+    this.sfxSoundBar?.setVisible(false)
   }
 
   private showModeSelection() {
@@ -146,5 +166,6 @@ export class MainMenu extends Scene {
       obj.setVisible(false)
     for (const obj of this.modeGroup)
       obj.setVisible(true)
+    this.sfxSoundBar?.setVisible(true)
   }
 }

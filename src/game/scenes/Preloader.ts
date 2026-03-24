@@ -1,4 +1,5 @@
 import { Scene } from 'phaser'
+import { preloadSfxAssets } from '@/game/sounds/SoundComposer'
 
 export class Preloader extends Scene {
   constructor() {
@@ -22,11 +23,7 @@ export class Preloader extends Scene {
     this.load.image('white-queen', 'assets/pieces/white-queen.png')
     this.load.image('white-rook', 'assets/pieces/white-rook.png')
 
-    this.load.audio('sfx-chess-move', 'assets/songs/single_move.mp3')
-    this.load.audio('sfx-chess-capture', 'assets/songs/win_piece.mp3')
-    this.load.audio('sfx-chess-threat', 'assets/songs/thunder.mp3')
-    this.load.audio('sfx-chess-end', 'assets/songs/loose_piece.mp3')
-    this.load.audio('sfx-menu-click', 'assets/songs/menu_click.mp3')
+    preloadSfxAssets(this)
   }
 
   create() {
