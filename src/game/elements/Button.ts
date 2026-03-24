@@ -20,6 +20,8 @@ interface ButtonOptions {
   style?: Omit<Phaser.Types.GameObjects.Text.TextStyle, 'fontSize' | 'color' | 'stroke' | 'strokeThickness' | 'align'>
 }
 
+const MENU_CLICK_SFX_KEY = 'sfx-menu-click'
+
 export class Button extends GameObjects.Text {
   constructor(scene: Scene, options: ButtonOptions) {
     super(scene, options.x, options.y, options.label, {
@@ -43,9 +45,13 @@ export class Button extends GameObjects.Text {
       this.setVisible(options.visible)
     }
 
-    if (options.onClick) {
-      this.on('pointerdown', options.onClick)
-    }
+    this.on('pointerdown', () => {
+      if (scene.cache.audio.exists(MENU_CLICK_SFX_KEY)) {
+        scene.sound.play(MENU_CLICK_SFX_KEY, { volume: 0.45 })
+      }
+
+      options.onClick?.()
+    })
 
     scene.add.existing(this)
   }

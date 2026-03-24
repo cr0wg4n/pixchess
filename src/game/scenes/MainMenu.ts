@@ -21,6 +21,16 @@ export class MainMenu extends Scene {
   }
 
   create() {
+    this.mainBackground = this.add.image(0, 0, 'menu-background')
+      .setOrigin(0, 0)
+      .setDepth(-1)
+    this.fitBackgroundToViewport()
+
+    this.scale.on('resize', this.fitBackgroundToViewport, this)
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.fitBackgroundToViewport, this)
+    })
+
     this.title = this.add.text(384, 200, 'PixChess', {
       fontFamily: 'primary',
       fontSize: FONT_SIZES.xl,
@@ -105,11 +115,24 @@ export class MainMenu extends Scene {
     })
 
     this.botSetupGroup = [this.difficultySelector, this.colorSelector, playBtn, backBtn]
+  }
 
-    this.mainBackground = this.add.image(384, 384, 'background').setDepth(-1)
+  private fitBackgroundToViewport() {
+    if (!this.mainBackground) {
+      return
+    }
+
+    const width = this.cameras.main.width
+    const height = this.cameras.main.height
+
+    this.mainBackground
+      .setPosition(0, 0)
+      .setDisplaySize(width, height)
   }
 
   private showBotSetup() {
+    this.mainBackground.setTexture('background')
+
     for (const obj of this.modeGroup)
       obj.setVisible(false)
     for (const obj of this.botSetupGroup)
@@ -117,6 +140,8 @@ export class MainMenu extends Scene {
   }
 
   private showModeSelection() {
+    this.mainBackground.setTexture('menu-background')
+
     for (const obj of this.botSetupGroup)
       obj.setVisible(false)
     for (const obj of this.modeGroup)
